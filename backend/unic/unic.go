@@ -31,6 +31,12 @@ func init() {
 	})
 }
 
+//Fs에 들어갈 property 정의
+//NewFs 정의
+//common object 정의
+//upstream Fs 정의
+//로직 구성
+
 type Fs struct {
 	name     string       // name of this remote
 	features *fs.Features // optional features
