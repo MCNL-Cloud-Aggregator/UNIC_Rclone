@@ -3,12 +3,15 @@ package unic
 import (
 	"context"
 	"io"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/rclone/rclone/backend/unic/common"
 	"github.com/rclone/rclone/backend/unic/upstream"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/configmap"
+	"github.com/rclone/rclone/fs/config/configstruct"
 	"github.com/rclone/rclone/fs/hash"
 )
 
@@ -45,24 +48,78 @@ func init() {
 type Fs struct {
 	name      string         // name of this remote
 	features  *fs.Features   // optional features -> 이게 정확하게 뭔지 모르겠음
-	Opt       common.Options // parsed options -> 이게 정확하게 뭔지 모르겠음2
+	opt       common.Options // parsed options -> 이게 정확하게 뭔지 모르겠음2
 	root      string         // the path we are working on
 	upstreams []*upstream.Fs // ToDo: unic spec에 맞게 새로 정의해야함
 	hashSet   hash.Set       // intersection of hash types
-}
-
-type Options struct {
 }
 
 type Object struct {
 }
 
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
+	// Parse config into Options struct
+	opt := new(common.Options)
+	err := configstruct.Set(m, opt)
+	if err != nil {
+		return nil, err
+	}
+
+	// Trim root
+	root = strings.Trim(root, "/")
+
+	// Make upstreams from opt.Upstreams
+	upstreams := make([]*upstream.Fs, len(opt.Upstreams))
+	errs := Errors(make([]error, len(opt.Upstreams)))
+	multithread(len(opt.Upstreams), func(i int) {
+		u := opt.Upstreams[i]
+		upstreams[i], errs[i] = upstream.New(ctx, u, root, opt)
+	})
+
+	// Error handling while making upstreams
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Make Fs object
 	f := &Fs{
 		name:     name,
 		root:     root,
+		opt:      *opt,
 		features: &fs.Features{},
 	}
+
+	var features = (&fs.Features{
+		CaseInsensitive:          false, // has case insensitive files
+		DuplicateFiles:           true,  // allows duplicate files
+		ReadMimeType:             false, // can read the mime type of objects
+		WriteMimeType:            false, // can set the mime type of objects
+		CanHaveEmptyDirectories:  true,  // can have empty directories
+		BucketBased:              ?, // is bucket based (like s3, swift, etc.)
+		BucketBasedRootOK:        ?, // is bucket based and can use from root
+		SetTier:                  false,  // allows set tier functionality on objects
+		GetTier:                  false,  // allows to retrieve storage tier of objects
+		ServerSideAcrossConfigs:  false,  // can server-side copy between different remotes of the same type
+		IsLocal:                  false,  // is the local backend
+		SlowModTime:              true,  // if calling ModTime() generally takes an extra transaction
+		SlowHash:                 true,  // if calling Hash() generally takes an extra transaction
+		ReadMetadata:             bool,  // can read metadata from objects
+		WriteMetadata:            bool,  // can write metadata to objects
+		UserMetadata:             bool,  // can read/write general purpose metadata
+		ReadDirMetadata:          bool,  // can read metadata from directories (implements Directory.Metadata)
+		WriteDirMetadata:         bool,  // can write metadata to directories (implements Directory.SetMetadata)
+		WriteDirSetModTime:       bool,  // can write metadata to directories (implements Directory.SetModTime)
+		UserDirMetadata:          bool,  // can read/write general purpose metadata to/from directories
+		DirModTimeUpdatesOnWrite: bool,  // indicate writing files to a directory updates its modtime
+		FilterAware:              bool,  // can make use of filters if provided for listing
+		PartialUploads:           bool,  // uploaded file can appear incomplete on the fs while it's being uploaded
+		NoMultiThreading:         bool,  // set if can't have multiplethreads on one download open
+		Overlay:                  bool,  // this wraps one or more backends to add functionality
+		ChunkWriterDoesntSeek:    bool,  // set if the chunk writer doesn't need to read the data more than once
+	}).Fill(ctx, f)
+
 	return f, nil
 }
 
@@ -122,3 +179,16 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	return nil
 }
 func (o *Object) Remove(ctx context.Context) error { return nil }
+
+func multithread(num int, fn func(int)) {
+	var wg sync.WaitGroup
+	for i := 0; i < num; i++ {
+		wg.Add(1)
+		i := i
+		go func() {
+			defer wg.Done()
+			fn(i)
+		}()
+	}
+	wg.Wait()
+}
