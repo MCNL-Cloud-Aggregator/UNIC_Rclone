@@ -5,6 +5,8 @@ import (
 	"io"
 	"time"
 
+	"github.com/rclone/rclone/backend/unic/common"
+	"github.com/rclone/rclone/backend/unic/upstream"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/hash"
@@ -37,11 +39,16 @@ func init() {
 //upstream Fs 정의
 //로직 구성
 
+// upstream fs, backend fs
+// NewFs
+
 type Fs struct {
-	name     string       // name of this remote
-	features *fs.Features // optional features
-	opt      Options      // parsed options
-	root     string       // the path we are working on
+	name      string         // name of this remote
+	features  *fs.Features   // optional features -> 이게 정확하게 뭔지 모르겠음
+	Opt       common.Options // parsed options -> 이게 정확하게 뭔지 모르겠음2
+	root      string         // the path we are working on
+	upstreams []*upstream.Fs // ToDo: unic spec에 맞게 새로 정의해야함
+	hashSet   hash.Set       // intersection of hash types
 }
 
 type Options struct {

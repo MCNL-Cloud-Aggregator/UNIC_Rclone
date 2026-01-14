@@ -8,8 +8,6 @@ import (
 	"io"
 	"math"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	//"github.com/rclone/rclone/backend/union/common"
@@ -25,67 +23,21 @@ var (
 	ErrUsageFieldNotSupported = errors.New("this usage field is not supported")
 )
 
+// working dir를 따로 저장하고, fs와 root fs를 구분은 x, 무조건 root fs를 기반으로
 // Fs is a wrap of any fs and its configs
 type Fs struct {
-	fs.Fs          // fs 패키지의 Fs를 임베딩 -> 요놈의 내용을 다 구현해야함
-	RootFs   fs.Fs //실제로 위임할
-	RootPath string
-	//Opt         *common.Options
-	writable    bool
-	creatable   bool
-	usage       *fs.Usage     // Cache the usage
-	cacheTime   time.Duration // cache duration
-	cacheExpiry atomic.Int64  // usage cache expiry time
-	cacheMutex  sync.RWMutex
-	cacheOnce   sync.Once
-	cacheUpdate bool // if the cache is updating
-	writeback   bool // writeback to this upstream
-	writebackFs *Fs  // if non zero, writeback to this upstream
+	fs.Fs // fs 패키지의 Fs를 임베딩 -> 요놈의 내용을 다 구현해야함 -> rootFs
+	//shardPath string //reserved
+	writable  bool
+	creatable bool
+	// usage       *fs.Usage     // Cache the usage
+	// cacheTime   time.Duration // cache duration
+	// cacheExpiry atomic.Int64  // usage cache expiry time
+	// cacheMutex  sync.RWMutex
+	// cacheOnce   sync.Once
+	// cacheUpdate bool // if the cache is updating
 }
 
-//OneDrive fs
-/*type Fs struct {
-	name         string             // name of this remote
-	root         string             // the path we are working on
-	opt          Options            // parsed options
-	ci           *fs.ConfigInfo     // global config
-	features     *fs.Features       // optional features
-	srv          *rest.Client       // the connection to the OneDrive server
-	unAuth       *rest.Client       // no authentication connection to the OneDrive server
-	dirCache     *dircache.DirCache // Map of directory path to directory id
-	pacer        *fs.Pacer          // pacer for API calls
-	tokenRenewer *oauthutil.Renew   // renew the token on expiry
-	driveID      string             // ID to use for querying Microsoft Graph
-	driveType    string             // https://developer.microsoft.com/en-us/graph/docs/api-reference/v1.0/resources/drive
-	hashType     hash.Type          // type of the hash we are using
-}
-*/
-
-//GoogleDrive fs
-/*type Fs struct {
-	name             string             // name of this remote
-	root             string             // the path we are working on
-	opt              Options            // parsed options
-	ci               *fs.ConfigInfo     // global config
-	features         *fs.Features       // optional features
-	svc              *drive.Service     // the connection to the drive server
-	v2Svc            *drive_v2.Service  // used to create download links for the v2 api
-	client           *http.Client       // authorized client
-	rootFolderID     string             // the id of the root folder
-	dirCache         *dircache.DirCache // Map of directory path to directory id
-	lastQuery        string             // Last query string to check in unit tests
-	pacer            *fs.Pacer          // To pace the API calls
-	exportExtensions []string           // preferred extensions to download docs
-	importMimeTypes  []string           // MIME types to convert to docs
-	isTeamDrive      bool               // true if this is a team drive
-	m                configmap.Mapper
-	grouping         int32                        // number of IDs to search at once in ListR - read with atomic
-	listRmu          *sync.Mutex                  // protects listRempties
-	listRempties     map[string]struct{}          // IDs of supposedly empty directories which triggered grouping disable
-	dirResourceKeys  *sync.Map                    // map directory ID to resource key
-	permissionsMu    *sync.Mutex                  // protect the below
-	permissions      map[string]*drive.Permission // map permission IDs to Permissions
-}*/
 // Directory describes a wrapped Directory
 //
 // This is a wrapped Directory which contains the upstream Fs
