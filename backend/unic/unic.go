@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dropbox/dropbox-sdk-go-unofficial/v6/dropbox/files"
 	"github.com/rclone/rclone/backend/unic/common"
 	"github.com/rclone/rclone/backend/unic/upstream"
 	"github.com/rclone/rclone/fs"
@@ -280,8 +281,26 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 	return nil, nil
 }
 
+func (f *Fs) newObjectWithInfo(ctx context.Context, remote string, info *files.FileMetadata) (fs.Object, error) {
+	o := &Object{
+		fs:     f,
+		remote: remote,
+	}
+	//var err error
+	//if info != nil {
+	//	err = o.setMetadataFromEntry(info)
+	//} else {
+	//	err = o.readEntryAndSetMetadata(ctx)
+	//}
+	//if err != nil {
+	//	return nil, err
+	//}
+	return o, nil
+}
+
+
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
-	return &Object{}, nil
+	return f.newObjectWithInfo(ctx, remote, nil)
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
