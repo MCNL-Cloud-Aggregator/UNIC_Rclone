@@ -64,19 +64,19 @@ type Fs struct {
 // Will definitely have info but maybe not meta
 type Object struct {
 	fs      *Fs       // what this object is part of
+	id      string    // ID of the object
 	remote  string    // The remote path
 	size    int64     // size of the object
 	modTime time.Time // modification time of the object
-	id      string    // ID of the object
 }
 
 // Directory describes a OneDrive directory
 type Directory struct {
 	fs     *Fs    // what this object is part of
+	id     string // dir ID
 	remote string // The remote path
 	size   int64  // size of directory and contents or -1 if unknown
 	items  int64  // number of objects or -1 for unknown
-	id     string // dir ID
 }
 
 /*
@@ -230,13 +230,13 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	return f, nil
 }
 
-func (f *fs) newObject()(entry fs.DirEntry, err error)
-func (f *fs) newDir()(entry fs.DirEntry, err error)
+func (f *Fs) newObject(node NodeEntry) (entry fs.Object, err error)
+func (f *Fs) newDir(node NodeEntry) (entry fs.Directory, err error)
 
 func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer entryTable.Close()
 	nodes := make([]NodeEntry, 0, 10) // len=0, cap=10
@@ -256,23 +256,33 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 
 	// entry, entries, dirtree 만들기~
 	list := walk.NewListRHelper(callback)
-	for _, entry := range nodes {
-		switch entry.Type {
+	for _, node := range nodes {
+		var entry fs.DirEntry
+		switch node.Type {
 		case "file":
 			// file 전용 로직
-			o := newObject()
-			o.
+			o, err := f.newObject(node) //node에 적힌 데이터를 초기화한 object 객체를 저장
+			if err != nil {
+				return err
+			}
+			entry = o
 
 		case "dir":
 			// dir 전용 로직
-			fmt.Println("dir:", entry.Path)
+			d, err := f.newDir(node) //node에 적힌 데이터를 초기화한 directory 객체를 저장
+			if err != nil {
+				return err
+			}
+			entry = d
 
 		default:
-			return fmt.Errorf("invalid node type: %s", entry.Type)
+			return fmt.Errorf("invalid node type: %s", node.Type)
 		}
-		list.Add()
+
+		list.Add(entry)
 	}
 
+	return list.Flush()
 }
 
 /* Fs */
@@ -297,7 +307,6 @@ func (f *Fs) newObjectWithInfo(ctx context.Context, remote string, info *files.F
 	//}
 	return o, nil
 }
-
 
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	return f.newObjectWithInfo(ctx, remote, nil)
