@@ -19,7 +19,7 @@ import (
 	"github.com/rclone/rclone/fs/walk"
 )
 
-var inodetable_path = "/" //여기에는 inodetable이 저장될 경로를 쓸 것임
+var entrytable_path = "/" //여기에는 inodetable이 저장될 경로를 쓸 것임
 
 // Register with Fs
 func init() {
@@ -184,21 +184,6 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	// Trim root
 	root = strings.Trim(root, "/")
 
-	// Make upstreams from opt.Upstreams
-	upstreams := make([]*upstream.Fs, len(opt.Upstreams))
-	errs := Errors(make([]error, len(opt.Upstreams)))
-	multithread(len(opt.Upstreams), func(i int) {
-		u := opt.Upstreams[i]
-		upstreams[i], errs[i] = upstream.New(ctx, u, root, opt)
-	})
-
-	// Error handling while making upstreams
-	for _, err := range errs {
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	// Make Fs object
 	f := &Fs{
 		name:     name,
@@ -244,14 +229,17 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	return f, nil
 }
 
+func (f *fs) newObject()(entry fs.DirEntry, err error)
+func (f *fs) newDir()(entry fs.DirEntry, err error)
+
 func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
-	inodeTable, err := os.Open(inodetable_path)
+	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
 		panic(err)
 	}
-	defer inodeTable.Close()
+	defer entryTable.Close()
 	nodes := make([]NodeEntry, 0, 10) // len=0, cap=10
-	decoder := json.NewDecoder(inodeTable)
+	decoder := json.NewDecoder(entryTable)
 	for {
 		var node NodeEntry
 		if err := decoder.Decode(&node); err != nil {
@@ -267,8 +255,20 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 
 	// entry, entries, dirtree 만들기~
 	list := walk.NewListRHelper(callback)
-	for range nodes {
-		//node를 entry로 변환 후 list에 add vs list 함수 만든 후, list에서 entries를 return 받아서 list에 Add
+	for _, entry := range nodes {
+		switch entry.Type {
+		case "file":
+			// file 전용 로직
+			o := newObject()
+			o.
+
+		case "dir":
+			// dir 전용 로직
+			fmt.Println("dir:", entry.Path)
+
+		default:
+			return fmt.Errorf("invalid node type: %s", entry.Type)
+		}
 		list.Add()
 	}
 
