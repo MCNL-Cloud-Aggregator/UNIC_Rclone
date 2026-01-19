@@ -60,12 +60,93 @@ type Fs struct {
 	hashSet   hash.Set       // intersection of hash types
 }
 
+// Will definitely have info but maybe not meta
 type Object struct {
+	fs      *Fs       // what this object is part of
+	remote  string    // The remote path
+	size    int64     // size of the object
+	modTime time.Time // modification time of the object
+	id      string    // ID of the object
 }
 
-// -------------------------------------------------------------------------------------------------------
-var inodeMap map[int]int // 사용 중인 inode ID 추적
+// Directory describes a OneDrive directory
+type Directory struct {
+	fs     *Fs    // what this object is part of
+	remote string // The remote path
+	size   int64  // size of directory and contents or -1 if unknown
+	items  int64  // number of objects or -1 for unknown
+	id     string // dir ID
+}
 
+/*
+// Object is a filesystem like object provided by an Fs
+type Object interface {
+	ObjectInfo
+
+	// SetModTime sets the metadata on the object to set the modification date
+	SetModTime(ctx context.Context, t time.Time) error
+
+	// Open opens the file for read.  Call Close() on the returned io.ReadCloser
+	Open(ctx context.Context, options ...OpenOption) (io.ReadCloser, error)
+
+	// Update in to the object with the modTime given of the given size
+	//
+	// When called from outside an Fs by rclone, src.Size() will always be >= 0.
+	// But for unknown-sized objects (indicated by src.Size() == -1), Upload should either
+	// return an error or update the object properly (rather than e.g. calling panic).
+	Update(ctx context.Context, in io.Reader, src ObjectInfo, options ...OpenOption) error
+
+	// Removes this object
+	Remove(ctx context.Context) error
+}
+
+// ObjectInfo provides read only information about an object.
+type ObjectInfo interface {
+	DirEntry
+
+	// Hash returns the selected checksum of the file
+	// If no checksum is available it returns ""
+	Hash(ctx context.Context, ty hash.Type) (string, error)
+
+	// Storable says whether this object can be stored
+	Storable() bool
+}
+
+// DirEntry provides read only information about the common subset of
+// a Dir or Object.  These are returned from directory listings - type
+// assert them into the correct type.
+type DirEntry interface {
+	// Fs returns read only access to the Fs that this object is part of
+	Fs() Info
+
+	// String returns a description of the Object
+	String() string
+
+	// Remote returns the remote path
+	Remote() string
+
+	// ModTime returns the modification date of the file
+	// It should return a best guess if one isn't available
+	ModTime(context.Context) time.Time
+
+	// Size returns the size of the file
+	Size() int64
+}
+
+// Directory is a filesystem like directory provided by an Fs
+type Directory interface {
+	DirEntry
+
+	// Items returns the count of items in this directory or this
+	// directory and subdirectories if known, -1 for unknown
+	Items() int64
+
+	// ID returns the internal ID of this directory if known, or
+	// "" otherwise
+	ID() string
+}
+*/
+// -------------------------------------------------------------------------------------------------------
 type NodeType string
 
 const (
@@ -73,19 +154,23 @@ const (
 	NodeTypeDir  NodeType = "dir"
 )
 
-type Inode struct {
-	Id     int      `json:"inode"`
-	Parent string   `json:"parent"`
-	Name   string   `json:"name"`
-	Type   NodeType `json:"type"`
+type NodeEntry struct {
+	Id   int      `json:"id"`
+	Path string   `json:"path"`
+	Name string   `json:"name"`
+	Type NodeType `json:"type"`
+
+	Size    int64     `json:"size"`    // size of the object
+	ModTime time.Time `json:"modtime"` // modification time of the object
+	Items   int64     `json:"items"`   // number of objects or -1 for unknown
 }
 
 func (t NodeType) Valid() bool {
 	return t == NodeTypeFile || t == NodeTypeDir
 }
 
-func (i *Inode) IsDir() bool  { return i.Type == NodeTypeDir }
-func (i *Inode) IsFile() bool { return i.Type == NodeTypeFile }
+func (i *NodeEntry) IsDir() bool  { return i.Type == NodeTypeDir }
+func (i *NodeEntry) IsFile() bool { return i.Type == NodeTypeFile }
 
 // -------------------------------------------------------------------------------------------------------
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
@@ -165,10 +250,10 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 		panic(err)
 	}
 	defer inodeTable.Close()
-	nodes := make([]Inode, 0, 10) // len=0, cap=10
+	nodes := make([]NodeEntry, 0, 10) // len=0, cap=10
 	decoder := json.NewDecoder(inodeTable)
 	for {
-		var node Inode
+		var node NodeEntry
 		if err := decoder.Decode(&node); err != nil {
 			if err == io.EOF {
 				break // 파일 끝 도달
@@ -177,27 +262,8 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 			continue
 		}
 
-		// 로컬에 존재하지 않는 file이면 inode random 생성
-		if node.Id == -1 {
-			var n_id int
-			for {
-				n_id = generateRandomInode() // 이거 함수 짜야되긴 함
-				if _, exists := inodeMap[n_id]; !exists {
-					break
-				}
-			}
-			node.Id = n_id
-			inodeMap[n_id] = len(nodes) // map에 추가
-		}
-
 		nodes = append(nodes, node)
 	}
-
-	//확인
-	/*fmt.Println("총 Inode 수:", len(nodes))
-	for i, n := range nodes {
-		fmt.Printf("%d: %+v\n", i, n)
-	}*/
 
 	// entry, entries, dirtree 만들기~
 	list := walk.NewListRHelper(callback)
