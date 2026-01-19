@@ -2,7 +2,10 @@ package unic
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,7 +16,10 @@ import (
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
 	"github.com/rclone/rclone/fs/hash"
+	"github.com/rclone/rclone/fs/walk"
 )
+
+var inodetable_path = "/" //여기에는 inodetable이 저장될 경로를 쓸 것임
 
 // Register with Fs
 func init() {
@@ -57,6 +63,31 @@ type Fs struct {
 type Object struct {
 }
 
+// -------------------------------------------------------------------------------------------------------
+var inodeMap map[int]int // 사용 중인 inode ID 추적
+
+type NodeType string
+
+const (
+	NodeTypeFile NodeType = "file"
+	NodeTypeDir  NodeType = "dir"
+)
+
+type Inode struct {
+	Id     int      `json:"inode"`
+	Parent string   `json:"parent"`
+	Name   string   `json:"name"`
+	Type   NodeType `json:"type"`
+}
+
+func (t NodeType) Valid() bool {
+	return t == NodeTypeFile || t == NodeTypeDir
+}
+
+func (i *Inode) IsDir() bool  { return i.Type == NodeTypeDir }
+func (i *Inode) IsFile() bool { return i.Type == NodeTypeFile }
+
+// -------------------------------------------------------------------------------------------------------
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
 	// Parse config into Options struct
 	opt := new(common.Options)
@@ -90,7 +121,6 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		opt:      *opt,
 		features: &fs.Features{},
 	}
-
 	// features 정의
 	var features = (&fs.Features{
 		CaseInsensitive:          false, // has case insensitive files
@@ -127,6 +157,55 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	// 추후 필요시 Move, Purge, ListR 등 추가
 
 	return f, nil
+}
+
+func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
+	inodeTable, err := os.Open(inodetable_path)
+	if err != nil {
+		panic(err)
+	}
+	defer inodeTable.Close()
+	nodes := make([]Inode, 0, 10) // len=0, cap=10
+	decoder := json.NewDecoder(inodeTable)
+	for {
+		var node Inode
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break // 파일 끝 도달
+			}
+			fmt.Println("JSON parse error:", err)
+			continue
+		}
+
+		// 로컬에 존재하지 않는 file이면 inode random 생성
+		if node.Id == -1 {
+			var n_id int
+			for {
+				n_id = generateRandomInode() // 이거 함수 짜야되긴 함
+				if _, exists := inodeMap[n_id]; !exists {
+					break
+				}
+			}
+			node.Id = n_id
+			inodeMap[n_id] = len(nodes) // map에 추가
+		}
+
+		nodes = append(nodes, node)
+	}
+
+	//확인
+	/*fmt.Println("총 Inode 수:", len(nodes))
+	for i, n := range nodes {
+		fmt.Printf("%d: %+v\n", i, n)
+	}*/
+
+	// entry, entries, dirtree 만들기~
+	list := walk.NewListRHelper(callback)
+	for range nodes {
+		//node를 entry로 변환 후 list에 add vs list 함수 만든 후, list에서 entries를 return 받아서 list에 Add
+		list.Add()
+	}
+
 }
 
 /* Fs */
