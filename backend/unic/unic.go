@@ -315,11 +315,26 @@ func (f *Fs) Hashes() hash.Set {
 
 /* Object */
 // DirEntry
-func (o *Object) Fs() fs.Info                                            { return nil }
-func (o *Object) String() string                                         { return "object" }
-func (o *Object) Remote() string                                         { return "" }
-func (o *Object) ModTime(ctx context.Context) time.Time                  { return time.Now() }
-func (o *Object) Size() int64                                            { return 0 }
+func (o *Object) Fs() fs.Info {
+	return o.fs
+}
+
+func (o *Object) String() string {
+	return o.remote
+}
+
+func (o *Object) Remote() string {
+	return o.remote
+}
+
+func (o *Object) ModTime(ctx context.Context) time.Time {
+	return o.modTime
+}
+
+func (o *Object) Size() int64 {
+	return o.size
+}
+
 func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) { return "", nil }
 func (o *Object) Storable() bool                                         { return true }
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error      { return nil }
