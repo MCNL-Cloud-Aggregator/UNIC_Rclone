@@ -91,34 +91,40 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		features: &fs.Features{},
 	}
 
+	// features 정의
 	var features = (&fs.Features{
 		CaseInsensitive:          false, // has case insensitive files
-		DuplicateFiles:           true,  // allows duplicate files
+		DuplicateFiles:           false, // 동일한 경로, 이름을 가진 파일이 존재할 수 있는지
 		ReadMimeType:             false, // can read the mime type of objects
 		WriteMimeType:            false, // can set the mime type of objects
 		CanHaveEmptyDirectories:  true,  // can have empty directories
-		BucketBased:              ?, // is bucket based (like s3, swift, etc.)
-		BucketBasedRootOK:        ?, // is bucket based and can use from root
-		SetTier:                  false,  // allows set tier functionality on objects
-		GetTier:                  false,  // allows to retrieve storage tier of objects
-		ServerSideAcrossConfigs:  false,  // can server-side copy between different remotes of the same type
-		IsLocal:                  false,  // is the local backend
-		SlowModTime:              true,  // if calling ModTime() generally takes an extra transaction
-		SlowHash:                 true,  // if calling Hash() generally takes an extra transaction
-		ReadMetadata:             bool,  // can read metadata from objects
-		WriteMetadata:            bool,  // can write metadata to objects
-		UserMetadata:             bool,  // can read/write general purpose metadata
-		ReadDirMetadata:          bool,  // can read metadata from directories (implements Directory.Metadata)
-		WriteDirMetadata:         bool,  // can write metadata to directories (implements Directory.SetMetadata)
-		WriteDirSetModTime:       bool,  // can write metadata to directories (implements Directory.SetModTime)
-		UserDirMetadata:          bool,  // can read/write general purpose metadata to/from directories
-		DirModTimeUpdatesOnWrite: bool,  // indicate writing files to a directory updates its modtime
-		FilterAware:              bool,  // can make use of filters if provided for listing
-		PartialUploads:           bool,  // uploaded file can appear incomplete on the fs while it's being uploaded
-		NoMultiThreading:         bool,  // set if can't have multiplethreads on one download open
-		Overlay:                  bool,  // this wraps one or more backends to add functionality
-		ChunkWriterDoesntSeek:    bool,  // set if the chunk writer doesn't need to read the data more than once
+		BucketBased:              false, // cloud의 저장소 안에 bucket이라는 최상위 저장소가 존재하는지 여부
+		BucketBasedRootOK:        false, // bucket이 있을 시 root에 대한 요청을 허가할 것인지 아닌지 여부
+		SetTier:                  false, // 엑세스 빈도에 따라 파일의 등급을 나누는 기능이 있는지
+		GetTier:                  false, // 엑세스 빈도에 따라 파일의 등급을 나누는 기능이 있는지
+		ServerSideAcrossConfigs:  false, // local을 거치지 않고 server끼리의 파일 복사가 가능한지 여부
+		IsLocal:                  false, // is the local backend
+		SlowModTime:              true,  // modetime을 확인하는데 시간이 많이 드는지
+		SlowHash:                 true,  // hash를 확인하는데 시간이 많이 드는지
+		ReadMetadata:             false, // can read metadata from objects, Object.Metadata() 구현 필요, 일단은 false
+		WriteMetadata:            false, // can write metadata to objects, 일단은 false
+		UserMetadata:             false, // user가 정의한 메타데이터 정의 가능 여부
+		ReadDirMetadata:          false, // can read metadata from directories (implements Directory.Metadata), 일단은 false
+		WriteDirMetadata:         false, // can write metadata to directories (implements Directory.SetMetadata), 일단은 false
+		WriteDirSetModTime:       false, // can write metadata to directories (implements Directory.SetModTime), 일단은 false
+		UserDirMetadata:          false, // user가 정의한 메타데이터 정의 가능 여부
+		DirModTimeUpdatesOnWrite: false, // indicate writing files to a directory updates its modtime, 일단은 false
+		FilterAware:              false, // 파일 필터링 기능을 서버에서 지원해서 그 기능을 사용할 것인지
+		PartialUploads:           false, // 업로드중인 파일이 서버상에서 미완성된 상태로 다른 사용자에게 보여주는지 여부
+		NoMultiThreading:         true,  // set if can't have multiplethreads on one download open
+		Overlay:                  true,  // this wraps one or more backends to add functionality
+		ChunkWriterDoesntSeek:    true,  // 대용량 파일을 업로드할 시 rclone은 chunkwriter를 이용해서 파일을 업로드하는데 chunkwriter가 업로드 도중 끊기면 해당 부분을 seek해야할 수도 있음. 그걸 가능하게 할지말지 설정.
 	}).Fill(ctx, f)
+
+	// Fs 객체에 features 저장
+	f.features = features
+
+	// 추후 필요시 Move, Purge, ListR 등 추가
 
 	return f, nil
 }
