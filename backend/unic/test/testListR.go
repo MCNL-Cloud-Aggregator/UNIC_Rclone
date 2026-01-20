@@ -84,6 +84,7 @@ func main() {
 
 		remote := makeRemote(node.Path, fs.Root())
 		if remote == "" {
+			fmt.Printf("node.Path: %s, f.Root(): %s\n", node.Path, fs.Root())
 			continue // root 밖이거나 root 자체
 		}
 
