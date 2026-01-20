@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
+	"github.com/rclone/rclone/fs/dis_operations"
 	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/fs/walk"
 )
@@ -229,6 +231,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	return f, nil
 }
 
+// 실제 cloud storage에는 데이터가 있지만 아직 Object 객체가 없을 때 Object 객체를 생성하는 method
 func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.Object, error) {
 	o := &Object{
 		fs:     f,
@@ -256,10 +259,10 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (entry fs.Object, err
 	return f.newObject(ctx, remote, nil)
 }
 
-func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
+func (f *Fs) findNodeFromTable(remote string) (NodeEntry, error) {
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
-		return nil, err
+		return NodeEntry{}, err
 	}
 	defer entryTable.Close()
 
@@ -270,15 +273,15 @@ func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
 			if err == io.EOF {
 				break
 			}
-			return nil, err
+			return NodeEntry{}, err
 		}
 
 		if node.Remote == remote {
-			return &node, nil
+			return node, nil
 		}
 	}
 
-	return nil, fs.ErrorObjectNotFound
+	return NodeEntry{}, fs.ErrorObjectNotFound
 }
 
 func (f *Fs) newDir(node NodeEntry) (entry fs.Directory, err error) {
@@ -320,7 +323,7 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 		switch node.Type {
 		case "file":
 			// file 전용 로직
-			o, err := f.newObject(node) //node에 적힌 데이터를 초기화한 object 객체를 저장
+			o, err := f.newObject(nil, "", &node) //node에 적힌 데이터를 초기화한 object 객체를 저장
 			if err != nil {
 				return err
 			}
@@ -351,7 +354,7 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	return &Object{}, nil
+	return &Object{},
 }
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error { return nil }
@@ -404,9 +407,58 @@ func (o *Object) Size() int64 {
 func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) { return "", nil }
 func (o *Object) Storable() bool                                         { return true }
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error      { return nil }
+
+// UNIC의 파일로 read와 같은 system call이 들어올 때 실제 Cloud Storage의 파일로부터 데이터를 읽어올 수 있는 통로를 제공.
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
-	return io.NopCloser(nil), nil
+	// 1. 임시 파일 경로 생성
+	tempFile, err := os.CreateTemp("", "unic_temp")
+	if err != nil {
+		return nil, err
+	}
+	tempFilePath := tempFile.Name()
+	tempFile.Close() // Dis_Download가 파일을 덮어쓸 수 있도록 닫아줌
+
+	// 2. Dis_Download 로직 호출
+	// targetName은 파일명만 추출해서 사용된다고 가정 (filepath.Base)
+	// unic의 remote 경로 전체가 필요한지, 파일명만 필요한지는 unic의 설계에 따름
+	// 현재 Dis_Download는 파일명을 키로 사용함.
+	targetName := o.remote
+
+	// args[0]: 타겟 이름, args[1]: 저장할 로컬 경로 (절대 경로 추천)
+	absTempPath, err := filepath.Abs(tempFilePath)
+	if err != nil {
+		os.Remove(tempFilePath)
+		return nil, err
+	}
+
+	err = dis_operations.Dis_Download([]string{targetName, absTempPath}, false)
+	if err != nil {
+		os.Remove(tempFilePath)
+		return nil, err
+	}
+
+	// 3. 복원된 파일 열기
+	f, err := os.Open(tempFilePath)
+	if err != nil {
+		os.Remove(tempFilePath)
+		return nil, err
+	}
+
+	// 4. Close 시 임시 파일 삭제
+	return &tempFileCloser{File: f, tempPath: tempFilePath}, nil
 }
+
+type tempFileCloser struct {
+	*os.File
+	tempPath string
+}
+
+func (c *tempFileCloser) Close() error {
+	err := c.File.Close()
+	_ = os.Remove(c.tempPath)
+	return err
+}
+
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
 	return nil
 }
