@@ -293,7 +293,7 @@ func (f *Fs) newDir(node NodeEntry) (entry fs.Directory, err error) {
 	return d, nil
 }
 
-func isUnderDir(prefix, path string) bool {
+func isUnderDir(path, prefix string) bool {
 	if prefix == "" || prefix == "/" {
 		return true
 	}
@@ -362,7 +362,7 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 			return err
 		}
 
-		if !isUnderDir(f.Root(), node.Path) {
+		if !isUnderDir(node.Path, f.Root()) {
 			continue
 		}
 
