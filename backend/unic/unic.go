@@ -231,7 +231,6 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	return f, nil
 }
 
-// 실제 cloud storage에는 데이터가 있지만 아직 Object 객체가 없을 때 Object 객체를 생성하는 method
 func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.Object, error) {
 	o := &Object{
 		fs:     f,
@@ -259,10 +258,10 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (entry fs.Object, err
 	return f.newObject(ctx, remote, nil)
 }
 
-func (f *Fs) findNodeFromTable(remote string) (NodeEntry, error) {
+func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
-		return NodeEntry{}, err
+		return nil, err
 	}
 	defer entryTable.Close()
 
@@ -273,15 +272,15 @@ func (f *Fs) findNodeFromTable(remote string) (NodeEntry, error) {
 			if err == io.EOF {
 				break
 			}
-			return NodeEntry{}, err
+			return nil, err
 		}
 
 		if node.Remote == remote {
-			return node, nil
+			return &node, nil
 		}
 	}
 
-	return NodeEntry{}, fs.ErrorObjectNotFound
+	return nil, fs.ErrorObjectNotFound
 }
 
 func (f *Fs) newDir(node NodeEntry) (entry fs.Directory, err error) {
@@ -323,7 +322,7 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 		switch node.Type {
 		case "file":
 			// file 전용 로직
-			o, err := f.newObject(nil, "", &node) //node에 적힌 데이터를 초기화한 object 객체를 저장
+			o, err := f.newObject(node) //node에 적힌 데이터를 초기화한 object 객체를 저장
 			if err != nil {
 				return err
 			}
@@ -354,7 +353,7 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	return &Object{},
+	return &Object{}, nil
 }
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error { return nil }
@@ -451,12 +450,6 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 type tempFileCloser struct {
 	*os.File
 	tempPath string
-}
-
-func (c *tempFileCloser) Close() error {
-	err := c.File.Close()
-	_ = os.Remove(c.tempPath)
-	return err
 }
 
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
