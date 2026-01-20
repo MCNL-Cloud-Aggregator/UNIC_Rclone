@@ -240,7 +240,7 @@ func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.
 		o.size = node.Size
 		o.modTime = node.ModTime
 	} else {
-		foundNode, err = f.findNodeFromTable(remote)
+		foundNode, err := f.findNodeFromTable(remote)
 		if err != nil {
 			return nil, err
 		}
@@ -252,12 +252,33 @@ func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.
 	return o, err
 }
 
-func (f *Fs) findNodeFromTable(remote string) (NodeEntry, error) {
-
-}
-
 func (f *Fs) NewObject(ctx context.Context, remote string) (entry fs.Object, err error) {
 	return f.newObject(ctx, remote, nil)
+}
+
+func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
+	entryTable, err := os.Open(entrytable_path)
+	if err != nil {
+		return nil, err
+	}
+	defer entryTable.Close()
+
+	decoder := json.NewDecoder(entryTable)
+	for {
+		var node NodeEntry
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+
+		if node.Remote == remote {
+			return &node, nil
+		}
+	}
+
+	return nil, fs.ErrorObjectNotFound
 }
 
 func (f *Fs) newDir(node NodeEntry) (entry fs.Directory, err error) {
