@@ -56,8 +56,8 @@ func init() {
 
 type Fs struct {
 	name      string         // name of this remote
-	features  *fs.Features   // optional features -> 이게 정확하게 뭔지 모르겠음
-	opt       common.Options // parsed options -> 이게 정확하게 뭔지 모르겠음2
+	features  *fs.Features   // optional features
+	opt       common.Options // parsed options
 	root      string         // the path we are working on
 	upstreams []*upstream.Fs // ToDo: unic spec에 맞게 새로 정의해야함
 	hashSet   hash.Set       // intersection of hash types
@@ -410,7 +410,46 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	return &Object{}, nil
+	// 1. Create a temporary directory
+	tempDir, err := os.MkdirTemp("", "unic_upload")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tempDir) // Clean up
+
+	// 2. Create the file with the correct name
+	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
+	tempFile, err := os.Create(tempFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+
+	// 3. Copy content
+	_, err = io.Copy(tempFile, in)
+	// Close the file explicitly before uploading so it is flushed to disk
+	closeErr := tempFile.Close()
+	if err != nil {
+		return nil, fmt.Errorf("failed to write to temp file: %w", err)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("failed to close temp file: %w", closeErr)
+	}
+
+	// 4. Call Dis_Upload
+	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
+	err = dis_operations.Dis_Upload([]string{tempFilePath}, false, dis_operations.RoundRobin)
+	if err != nil {
+		return nil, fmt.Errorf("Dis_Upload failed: %w", err)
+	}
+
+	// 5. Return the object
+	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
+	return &Object{
+		fs:      f,
+		remote:  src.Remote(),
+		size:    src.Size(),
+		modTime: src.ModTime(ctx),
+	}, nil
 }
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error { return nil }
