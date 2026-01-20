@@ -1,0 +1,4 @@
+{"id":"1","name":"root","path":"/","type":"dir"}
+{"id":"2","name":"docs","path":"/docs","type":"dir"}
+{"id":"3","name":"readme.txt","path":"/docs/readme.txt","type":"file","size":1234}
+{"id":"4","name":"main.go","path":"/main.go","type":"file","size":2048}
