@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dropbox/dropbox-sdk-go-unofficial/v6/dropbox/files"
 	"github.com/rclone/rclone/backend/unic/common"
 	"github.com/rclone/rclone/backend/unic/upstream"
 	"github.com/rclone/rclone/fs"
@@ -64,7 +63,7 @@ type Fs struct {
 // Will definitely have info but maybe not meta
 type Object struct {
 	fs      *Fs       // what this object is part of
-	id      string    // ID of the object
+	id      int       // ID of the object
 	remote  string    // The remote path
 	size    int64     // size of the object
 	modTime time.Time // modification time of the object
@@ -73,7 +72,7 @@ type Object struct {
 // Directory describes a OneDrive directory
 type Directory struct {
 	fs     *Fs    // what this object is part of
-	id     string // dir ID
+	id     int    // dir ID
 	remote string // The remote path
 	size   int64  // size of directory and contents or -1 if unknown
 	items  int64  // number of objects or -1 for unknown
@@ -156,10 +155,10 @@ const (
 )
 
 type NodeEntry struct {
-	Id   int      `json:"id"`
-	Path string   `json:"path"`
-	Name string   `json:"name"`
-	Type NodeType `json:"type"`
+	Id     int      `json:"id"`
+	Remote string   `json:"remote"`
+	Name   string   `json:"name"`
+	Type   NodeType `json:"type"`
 
 	Size    int64     `json:"size"`    // size of the object
 	ModTime time.Time `json:"modtime"` // modification time of the object
@@ -230,8 +229,47 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	return f, nil
 }
 
-func (f *Fs) newObject(node NodeEntry) (entry fs.Object, err error)
-func (f *Fs) newDir(node NodeEntry) (entry fs.Directory, err error)
+func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.Object, error) {
+	o := &Object{
+		fs:     f,
+		remote: remote,
+	}
+	var err error
+	if node != nil {
+		o.id = node.Id
+		o.size = node.Size
+		o.modTime = node.ModTime
+	} else {
+		foundNode, err = f.findNodeFromTable(remote)
+		if err != nil {
+			return nil, err
+		}
+
+		o.id = foundNode.Id
+		o.size = foundNode.Size
+		o.modTime = foundNode.ModTime
+	}
+	return o, err
+}
+
+func (f *Fs) findNodeFromTable(remote string) (NodeEntry, error) {
+
+}
+
+func (f *Fs) NewObject(ctx context.Context, remote string) (entry fs.Object, err error) {
+	return f.newObject(ctx, remote, nil)
+}
+
+func (f *Fs) newDir(node NodeEntry) (entry fs.Directory, err error) {
+	d := &Directory{
+		fs:     f,
+		id:     node.Id,
+		remote: node.Remote,
+		size:   -1,
+		items:  -1,
+	}
+	return d, nil
+}
 
 func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
 	entryTable, err := os.Open(entrytable_path)
@@ -289,27 +327,6 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 // Fs
 func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 	return nil, nil
-}
-
-func (f *Fs) newObjectWithInfo(ctx context.Context, remote string, info *files.FileMetadata) (fs.Object, error) {
-	o := &Object{
-		fs:     f,
-		remote: remote,
-	}
-	//var err error
-	//if info != nil {
-	//	err = o.setMetadataFromEntry(info)
-	//} else {
-	//	err = o.readEntryAndSetMetadata(ctx)
-	//}
-	//if err != nil {
-	//	return nil, err
-	//}
-	return o, nil
-}
-
-func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
-	return f.newObjectWithInfo(ctx, remote, nil)
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
@@ -385,4 +402,32 @@ func multithread(num int, fn func(int)) {
 		}()
 	}
 	wg.Wait()
+}
+
+func (d *Directory) Fs() fs.Info {
+	return d.fs
+}
+
+func (d *Directory) String() string {
+	return d.remote
+}
+
+func (d *Directory) Remote() string {
+	return d.remote
+}
+
+func (d *Directory) ModTime(context.Context) time.Time {
+	return time.Time{}
+}
+
+func (d *Directory) Size() int64 {
+	return d.size
+}
+
+func (d *Directory) Items() int64 {
+	return d.items
+}
+
+func (d *Directory) ID() string {
+	return fmt.Sprintf("%d", d.id)
 }
