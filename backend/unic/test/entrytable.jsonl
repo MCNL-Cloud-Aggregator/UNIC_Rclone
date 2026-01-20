@@ -1,0 +1,4 @@
+{"path":"/sub1/docs/readme.txt","name":"readme.txt","type":"file"}
+{"path":"/sub1/docs","name":"docs","type":"dir"}
+{"path":"/sub1/main.go","name":"main.go","type":"file"}
+{"path":"/other/file.txt","name":"file.txt","type":"file"}
