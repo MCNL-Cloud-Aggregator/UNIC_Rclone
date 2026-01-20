@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -155,10 +156,10 @@ const (
 )
 
 type NodeEntry struct {
-	Id     int      `json:"id"`
-	Remote string   `json:"remote"`
-	Name   string   `json:"name"`
-	Type   NodeType `json:"type"`
+	Id   int      `json:"id"`
+	Path string   `json:"path"`
+	Name string   `json:"name"`
+	Type NodeType `json:"type"`
 
 	Size    int64     `json:"size"`    // size of the object
 	ModTime time.Time `json:"modtime"` // modification time of the object
@@ -273,7 +274,7 @@ func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
 			return nil, err
 		}
 
-		if node.Remote == remote {
+		if node.Path == remote {
 			return &node, nil
 		}
 	}
@@ -285,11 +286,59 @@ func (f *Fs) newDir(node NodeEntry) (entry fs.Directory, err error) {
 	d := &Directory{
 		fs:     f,
 		id:     node.Id,
-		remote: node.Remote,
+		remote: node.Path,
 		size:   -1,
 		items:  -1,
 	}
 	return d, nil
+}
+
+func isUnderDir(path, prefix string) bool {
+	if prefix == "" || prefix == "/" {
+		return true
+	}
+
+	prefix = strings.TrimSuffix(prefix, "/")
+
+	if path == prefix {
+		return false
+	}
+
+	return strings.HasPrefix(path, prefix+"/")
+}
+
+func isDirectChild(dir, remote string) bool {
+	if dir == "/" {
+		return path.Dir(remote) == "/"
+	}
+	return path.Dir(remote) == dir
+}
+
+// makeRemote converts an absolute path (node.Path) into
+// a Fs.root-relative path (remote) suitable for DirEntry.
+func makeRemote(path string, prefix string) string {
+	// root 기준이면 그대로 상대경로
+	if prefix == "" || prefix == "/" {
+		return strings.TrimPrefix(path, "/")
+	}
+
+	// root 끝의 '/' 제거
+	prefix = strings.TrimSuffix(prefix, "/")
+
+	// p가 root 자체이면 remote는 빈 문자열 (dir entry용)
+	if path == prefix {
+		return ""
+	}
+
+	// root 하위 경로만 허용
+	prefix_ := prefix + "/"
+	if !strings.HasPrefix(path, prefix_) {
+		// root 밖의 경로 → List/ListR 대상 아님
+		return ""
+	}
+
+	// root 기준 상대 경로로 변환
+	return strings.TrimPrefix(path, prefix_)
 }
 
 func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
@@ -298,29 +347,29 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 		return err
 	}
 	defer entryTable.Close()
-	nodes := make([]NodeEntry, 0, 10) // len=0, cap=10
 	decoder := json.NewDecoder(entryTable)
+	list := walk.NewListRHelper(callback)
+
 	for {
 		var node NodeEntry
+		var entry fs.DirEntry
+
 		if err := decoder.Decode(&node); err != nil {
 			if err == io.EOF {
 				break // 파일 끝 도달
 			}
 			fmt.Println("JSON parse error:", err)
+			return err
+		}
+
+		if !isUnderDir(node.Path, f.Root()) {
 			continue
 		}
 
-		nodes = append(nodes, node)
-	}
-
-	// entry, entries, dirtree 만들기~
-	list := walk.NewListRHelper(callback)
-	for _, node := range nodes {
-		var entry fs.DirEntry
 		switch node.Type {
 		case "file":
 			// file 전용 로직
-			o, err := f.newObject(node) //node에 적힌 데이터를 초기화한 object 객체를 저장
+			o, err := f.newObject(ctx, makeRemote(node.Path, f.Root()), &node) //node에 적힌 데이터를 초기화한 object 객체를 저장
 			if err != nil {
 				return err
 			}
