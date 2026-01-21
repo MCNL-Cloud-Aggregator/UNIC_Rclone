@@ -505,12 +505,10 @@ func (o *Object) SetModTime(ctx context.Context, t time.Time) error      { retur
 // UNIC의 파일로 read와 같은 system call이 들어올 때 실제 Cloud Storage의 파일로부터 데이터를 읽어올 수 있는 통로를 제공.
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
 	// 1. 임시 파일 경로 생성
-	tempFile, err := os.CreateTemp("", "unic_temp")
+	tempDir, err := os.MkdirTemp("", "unic_temp_dir")
 	if err != nil {
 		return nil, err
 	}
-	tempFilePath := tempFile.Name()
-	tempFile.Close() // Dis_Download가 파일을 덮어쓸 수 있도록 닫아줌
 
 	// 2. Dis_Download 로직 호출
 	// targetName은 파일명만 추출해서 사용된다고 가정 (filepath.Base)
@@ -518,28 +516,28 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	// 현재 Dis_Download는 파일명을 키로 사용함.
 	targetName := o.remote
 
-	// args[0]: 타겟 이름, args[1]: 저장할 로컬 경로 (절대 경로 추천)
-	absTempPath, err := filepath.Abs(tempFilePath)
+	// Debug
+	fs.Debugf(o, "UNIC Open 호출됨: targetName=%s, tempDir=%s", targetName, tempDir)
+
+	err = dis_operations.Dis_Download([]string{targetName, tempDir}, false)
 	if err != nil {
-		os.Remove(tempFilePath)
+		fs.Errorf(o, "Dis_Download 실패: targetName=%s, error=%v", targetName, err)
 		return nil, err
 	}
 
-	err = dis_operations.Dis_Download([]string{targetName, absTempPath}, false)
+	// 3. 실제 생성된 파일 경로 찾기
+	// Dis_Download가 tempDir 안에 readme.txt (혹은 .fcef 확장자 등)로 저장할 것이므로
+	// 실제 파일의 위치를 특정해야 합니다.
+	downloadedFilePath := filepath.Join(tempDir, targetName)
+	f, err := os.Open(downloadedFilePath)
 	if err != nil {
-		os.Remove(tempFilePath)
+		os.RemoveAll(tempDir)
 		return nil, err
 	}
-
-	// 3. 복원된 파일 열기
-	f, err := os.Open(tempFilePath)
-	if err != nil {
-		os.Remove(tempFilePath)
-		return nil, err
-	}
+	fs.Debugf(o, "dis_download 및 os.Open(downloadedFilePath) 성공: tempDir: %s", downloadedFilePath)
 
 	// 4. Close 시 임시 파일 삭제
-	return &tempFileCloser{File: f, tempPath: tempFilePath}, nil
+	return f, nil
 }
 
 type tempFileCloser struct {
