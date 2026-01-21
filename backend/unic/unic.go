@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/rclone/rclone/backend/unic/common"
-	"github.com/rclone/rclone/backend/unic/upstream"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
@@ -22,7 +21,7 @@ import (
 	"github.com/rclone/rclone/fs/walk"
 )
 
-var entrytable_path = "/" //여기에는 inodetable이 저장될 경로를 쓸 것임
+var entrytable_path = "/home/yrcho/.config/rclone/entrytable.jsonl" //여기에는 inodetable이 저장될 경로를 쓸 것임
 
 // Register with Fs
 func init() {
@@ -55,12 +54,12 @@ func init() {
 // NewFs
 
 type Fs struct {
-	name      string         // name of this remote
-	features  *fs.Features   // optional features
-	opt       common.Options // parsed options
-	root      string         // the path we are working on
-	upstreams []*upstream.Fs // ToDo: unic spec에 맞게 새로 정의해야함
-	hashSet   hash.Set       // intersection of hash types
+	name     string         // name of this remote
+	features *fs.Features   // optional features
+	opt      common.Options // parsed options
+	root     string         // the path we are working on
+	//upstreams []*upstream.Fs // ToDo: unic spec에 맞게 새로 정의해야함
+	hashSet hash.Set // intersection of hash types
 }
 
 // Will definitely have info but maybe not meta
