@@ -309,11 +309,60 @@ func isUnderDir(path, prefix string) bool {
 	return strings.HasPrefix(path, prefix+"/")
 }
 
-func isDirectChild(dir, remote string) bool {
-	if dir == "/" {
-		return path.Dir(remote) == "/"
+func isDirectChild(prefix, path_ string) bool {
+	if prefix == "/" {
+		return path.Dir(path_) == "/"
 	}
-	return path.Dir(remote) == dir
+	return path.Dir(path_) == prefix
+}
+
+func (f *Fs) getList(ctx context.Context, dir string, checkDir func(path, prefix string) bool) ([]fs.DirEntry, error) {
+	entryTable, err := os.Open(entrytable_path)
+	if err != nil {
+		return nil, err
+	}
+	defer entryTable.Close()
+
+	decoder := json.NewDecoder(entryTable)
+	var result []fs.DirEntry
+
+	for {
+		var node NodeEntry
+		var entry fs.DirEntry
+
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break
+			}
+			fmt.Println("JSON parse error:", err)
+			return nil, err
+		}
+
+		if !checkDir(node.Path, dir) {
+			continue
+		}
+
+		switch node.Type {
+		case "file":
+			o, err := f.newObject(ctx, makeRemote(node.Path, f.Root()), &node)
+			if err != nil {
+				return nil, err
+			}
+			entry = o
+		case "dir":
+			d, err := f.newDir(node)
+			if err != nil {
+				return nil, err
+			}
+			entry = d
+		default:
+			return nil, fmt.Errorf("invalid node type: %s", node.Type)
+		}
+
+		result = append(result, entry)
+	}
+
+	return result, nil
 }
 
 // makeRemote converts an absolute path (node.Path) into
@@ -344,52 +393,14 @@ func makeRemote(path string, prefix string) string {
 }
 
 func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
-	entryTable, err := os.Open(entrytable_path)
+
+	list := walk.NewListRHelper(callback)
+
+	entries, err := f.getList(ctx, dir, isUnderDir)
 	if err != nil {
 		return err
 	}
-	defer entryTable.Close()
-	decoder := json.NewDecoder(entryTable)
-	list := walk.NewListRHelper(callback)
-
-	for {
-		var node NodeEntry
-		var entry fs.DirEntry
-
-		if err := decoder.Decode(&node); err != nil {
-			if err == io.EOF {
-				break // 파일 끝 도달
-			}
-			fmt.Println("JSON parse error:", err)
-			return err
-		}
-
-		if !isUnderDir(node.Path, f.Root()) {
-			fmt.Printf("node.Path: %s, f.Root(): %s\n", node.Path, f.Root())
-			continue
-		}
-
-		switch node.Type {
-		case "file":
-			// file 전용 로직
-			o, err := f.newObject(ctx, makeRemote(node.Path, f.Root()), &node) //node에 적힌 데이터를 초기화한 object 객체를 저장
-			if err != nil {
-				return err
-			}
-			entry = o
-
-		case "dir":
-			// dir 전용 로직
-			d, err := f.newDir(node) //node에 적힌 데이터를 초기화한 directory 객체를 저장
-			if err != nil {
-				return err
-			}
-			entry = d
-
-		default:
-			return fmt.Errorf("invalid node type: %s", node.Type)
-		}
-
+	for _, entry := range entries {
 		list.Add(entry)
 	}
 
@@ -399,14 +410,12 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 /* Fs */
 // Fs
 func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
+	entries, err := f.getList(ctx, dir, isDirectChild)
+	if err != nil {
+		return nil, err
+	}
 
-	return nil, nil
-}
-
-/* Fs */
-// Fs
-func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
-	return nil, nil
+	return fs.DirEntries(entries), nil
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
@@ -454,15 +463,6 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error { return nil }
 func (f *Fs) Rmdir(ctx context.Context, dir string) error { return nil }
-
-// Info
-// func (f *Fs) Name() string
-
-// func (f *Fs) Root() string
-
-// func (f *Fs) String() string
-
-//func (f *Fs) Features() *fs.Features
 
 func (f *Fs) Name() string           { return f.name }
 func (f *Fs) Root() string           { return f.root }
