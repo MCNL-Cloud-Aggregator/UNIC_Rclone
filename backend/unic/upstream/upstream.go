@@ -1,3 +1,6 @@
+//go:build ignore
+// +build ignore
+
 // Package upstream provides utility functionality to union.
 package upstream
 
