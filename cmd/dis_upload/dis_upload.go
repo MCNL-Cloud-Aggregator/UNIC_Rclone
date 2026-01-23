@@ -55,7 +55,8 @@ If you wish to simply copy the file without any distribution, use the
 			if err != nil {
 				return err
 			}
-			return dis_operations.Dis_Upload(args, false, loadBalancer.Value)
+			return dis_operations.Dis_Upload(args, dis_operations.UploadTargets{UseConfig: true}, false, loadBalancer.Value)
+			//return printRemotes(dis_operations.UploadTargets{Remotes: GetUpstreamRemotestest(), UseConfig: false})
 		})
 	},
 }

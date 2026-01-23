@@ -14,6 +14,7 @@ import (
 
 	"github.com/rclone/rclone/backend/unic/common"
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
 	"github.com/rclone/rclone/fs/dis_operations"
@@ -315,6 +316,27 @@ func isDirectChild(prefix, path_ string) bool {
 	return path.Dir(path_) == prefix
 }
 
+func openEntryTable(path string) (*io.PipeReader, error) {
+	pr, pw := io.Pipe()
+
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	go func() {
+		defer f.Close()
+		defer pw.Close()
+
+		_, err := io.Copy(pw, f)
+		if err != nil {
+			_ = pw.CloseWithError(err)
+		}
+	}()
+
+	return pr, nil
+}
+
 func (f *Fs) getList(ctx context.Context, dir string, checkDir func(path, prefix string) bool) ([]fs.DirEntry, error) {
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
@@ -417,6 +439,26 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 	return fs.DirEntries(entries), nil
 }
 
+func (f *Fs) getUpstreamRemotes() []config.Remote {
+	remotes := config.GetRemotes()
+
+	seen := make(map[string]struct{})
+	for _, upstream := range f.opt.Upstreams {
+		_, configName, _, _, _ := fs.ParseRemote(upstream)
+		//name := strings.TrimSuffix(fsName, ":")
+		seen[configName] = struct{}{}
+	}
+
+	var result []config.Remote
+	for _, remote := range remotes {
+		if _, ok := seen[remote.Name]; ok {
+			result = append(result, remote)
+		}
+	}
+
+	return result
+}
+
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
 	// 1. Create a temporary directory
 	tempDir, err := os.MkdirTemp("", "unic_upload")
@@ -445,7 +487,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 
 	// 4. Call Dis_Upload
 	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
-	err = dis_operations.Dis_Upload([]string{tempFilePath}, false, dis_operations.RoundRobin)
+	err = dis_operations.Dis_Upload([]string{tempFilePath}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
 		return nil, fmt.Errorf("Dis_Upload failed: %w", err)
 	}

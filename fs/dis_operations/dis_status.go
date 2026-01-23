@@ -23,7 +23,9 @@ func CheckState(action string, args []string, loadbalancer LoadBalancerType) (bo
 		if answer {
 			// reupload
 			fmt.Printf("state: %s, answer: %t\n", state, answer)
-			return false, Dis_Upload([]string{origin_name}, true, loadbalancer)
+			return false, Dis_Upload([]string{origin_name}, UploadTargets{
+				UseConfig: true,
+			}, true, loadbalancer)
 		} else {
 			// dump old file
 			return false, DumpUploadState([]string{origin_name})
