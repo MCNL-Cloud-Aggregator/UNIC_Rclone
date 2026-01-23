@@ -89,7 +89,7 @@ func writeJsonFile(filePath string, data map[string]FileInfo) error {
 }
 
 // making distributed file info
-func GetDistributedInfo(fileName string, remote Remote, checksum string) (DistributedFile, error) {
+func GetDistributedInfo(fileName string, remote Remote, checksum string, target UploadTargets) (DistributedFile, error) {
 	if fileName == "" {
 		return DistributedFile{}, errors.New("fileName cannot be empty")
 	}
@@ -99,6 +99,7 @@ func GetDistributedInfo(fileName string, remote Remote, checksum string) (Distri
 		Remote:          remote,
 		Checksum:        checksum,
 		Check:           false,
+		RemotePool:      target.Remotes,
 	}, nil
 }
 

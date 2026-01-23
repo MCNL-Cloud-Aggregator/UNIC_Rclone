@@ -2,6 +2,8 @@ package dis_operations
 
 import (
 	"fmt"
+
+	"github.com/rclone/rclone/fs/config"
 )
 
 var remoteDirectory = "Distribution"
@@ -34,6 +36,8 @@ type DistributedFile struct {
 	Remote          Remote `json:"remote"`
 	Checksum        string `json:"dis_checksum"`
 	Check           bool   `json:"state_check"`
+
+	RemotePool []config.Remote
 }
 
 type Remote struct {
@@ -101,6 +105,8 @@ func (distributionFile *DistributedFile) AllocateRemote(loadbalancer LoadBalance
 	var err error
 
 	switch loadbalancer {
+	case RoundRobinFromSelectedRemotes:
+		remote, err = LoadBalancer_UNIC(distributionFile.RemotePool)
 	case RoundRobin:
 		remote, err = LoadBalancer_RoundRobin()
 	case DownloadOptima:

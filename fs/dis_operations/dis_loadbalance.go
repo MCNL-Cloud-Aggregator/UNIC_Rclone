@@ -21,21 +21,67 @@ var lb_file_name = "loadbalancer.json"
 type LoadBalancerType string
 
 const (
-	RoundRobin     LoadBalancerType = "RoundRobin"
-	DownloadOptima LoadBalancerType = "DownloadOptima"
-	UploadOptima   LoadBalancerType = "UploadOptima"
-	ResourceBased  LoadBalancerType = "ResourceBased"
-	None           LoadBalancerType = "None" // Invalid value
+	RoundRobinFromSelectedRemotes LoadBalancerType = "UNICRoundRobin"
+	RoundRobin                    LoadBalancerType = "RoundRobin"
+	DownloadOptima                LoadBalancerType = "DownloadOptima"
+	UploadOptima                  LoadBalancerType = "UploadOptima"
+	ResourceBased                 LoadBalancerType = "ResourceBased"
+	None                          LoadBalancerType = "None" // Invalid value
 )
 
 // Validate the input for load balancer
 func (lb LoadBalancerType) IsValid() bool {
 	switch lb {
-	case RoundRobin, DownloadOptima, UploadOptima, ResourceBased:
+	case RoundRobinFromSelectedRemotes, RoundRobin, DownloadOptima, UploadOptima, ResourceBased:
 		return true
 	default:
 		return false
 	}
+}
+
+func testgetUpstreamRemotestest() []config.Remote {
+	remotes := config.GetRemotes()
+	Upstreams := []string{
+		"youngrhee:",
+		"youngrhee2:",
+	}
+
+	seen := make(map[string]struct{})
+	for _, upstream := range Upstreams {
+		_, configName, _, _, _ := fs.ParseRemote(upstream)
+		//name := strings.TrimSuffix(fsName, ":")
+		seen[configName] = struct{}{}
+	}
+
+	var result []config.Remote
+	for _, remote := range remotes {
+		if _, ok := seen[remote.Name]; ok {
+			result = append(result, remote)
+		}
+	}
+
+	return result
+}
+
+func LoadBalancer_UNIC(remotes []config.Remote) (Remote, error) {
+	jsonFilePath := getLoadBalancerJsonFilePath()
+	existingLBInfo, err := readJSON(jsonFilePath)
+	if err != nil {
+		return Remote{}, err
+	}
+
+	if len(remotes) == 0 {
+		return Remote{}, fmt.Errorf("no available remotes")
+	}
+
+	// Select a remote using Round Robin
+	selectedRemote := remotes[existingLBInfo.RoundRobinCounter%len(remotes)]
+	selectedRemoteObj := Remote{selectedRemote.Name, selectedRemote.Type}
+
+	// Increment counters
+	IncrementRoundRobinCounter()
+
+	return selectedRemoteObj, nil
 }
 
 func LoadBalancer_RoundRobin() (Remote, error) {
@@ -45,7 +91,8 @@ func LoadBalancer_RoundRobin() (Remote, error) {
 		return Remote{}, err
 	}
 
-	remotes := config.GetRemotes()
+	//remotes := config.GetRemotes()
+	remotes := testgetUpstreamRemotestest()
 	if len(remotes) == 0 {
 		return Remote{}, fmt.Errorf("no available remotes")
 	}

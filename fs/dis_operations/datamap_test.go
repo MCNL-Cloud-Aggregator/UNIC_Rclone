@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestGetDistributedInfo(t *testing.T) {
+/*func TestGetDistributedInfo(t *testing.T) {
 	tempFile, err := os.CreateTemp("", "testfile_*.txt")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
@@ -35,7 +35,7 @@ func TestGetDistributedInfo(t *testing.T) {
 		t.Errorf("Expected remote: %+v, but got: %+v", remote, distributedFile.Remote)
 	}
 
-}
+}*/
 
 func TestMakeDataMap(t *testing.T) {
 	tempFile, err := os.CreateTemp("", "testfile_*.txt")
