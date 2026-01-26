@@ -439,6 +439,8 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 	return fs.DirEntries(entries), nil
 }
 
+// rclone에 등록된 remote중 unic에 등록된 remote의 배열을 가져오는 method
+// seen을 굳이 map[string]struct{}로 해야하나? string 배열을 사용하면 안되나?
 func (f *Fs) getUpstreamRemotes() []config.Remote {
 	remotes := config.GetRemotes()
 

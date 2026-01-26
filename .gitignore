@@ -1,3 +1,4 @@
 *.exe
 rclone
 *.jpg
+entrytable.jsonl
