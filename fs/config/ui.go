@@ -600,10 +600,33 @@ func EditRemote(ctx context.Context, ri *fs.RegInfo, name string) error {
 	return nil
 }
 
+// 사전 DeleteRemote hook 함수
+var PreDeleteCheckFunc func(name string) (bool, error)
+// 사후 hook 함수
+var PostDeleteActionFunc func(name string) error
+
 // DeleteRemote gets the user to delete a remote
 func DeleteRemote(name string) {
+	if PreDeleteCheckFunc != nil {
+		proceed, err := PreDeleteCheckFunc(name)
+		if err != nil {
+			fmt.Println("Error checking remote usage: %v",err)
+			return
+		}
+		if !proceed{
+			fmt.Println("Remote deletion cancelled.")
+			return
+		}
+	}
 	LoadedData().DeleteSection(name)
 	SaveConfig()
+
+	if PostDeleteActionFunc != nil {
+		err := PostDeleteActionFunc(name)
+		if err != nil {
+			fmt.Println("Warning: Post-delete action failed: %v", err)
+		}
+	}
 }
 
 // copyRemote asks the user for a new remote name and copies name into
