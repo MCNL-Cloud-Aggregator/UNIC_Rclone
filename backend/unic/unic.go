@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"bufio"
 
 	"github.com/rclone/rclone/backend/unic/common"
 	"github.com/rclone/rclone/fs"
@@ -22,7 +23,9 @@ import (
 	"github.com/rclone/rclone/fs/walk"
 )
 
-var entrytable_path = "/home/yrcho/.config/rclone/entrytable.jsonl" //여기에는 inodetable이 저장될 경로를 쓸 것임
+// inodetable path
+//var entrytable_path = "/home/yrcho/.config/rclone/entrytable.jsonl"
+var entrytable_path = "/UNIC_Rclone/entrytable.jsonl"
 
 // Register with Fs
 func init() {
@@ -462,23 +465,30 @@ func (f *Fs) getUpstreamRemotes() []config.Remote {
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
+	fs.Debugf(f, "----------Put method Start--------------")
 	// 1. Create a temporary directory
+	fs.Debugf(f, "----------Create a temporary directory start--------------")
 	tempDir, err := os.MkdirTemp("", "unic_upload")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tempDir) // Clean up
+	fs.Debugf(f, "----------Create a temporary directory end--------------")
 
 	// 2. Create the file with the correct name
+	fs.Debugf(f, "----------Create a temporary file start--------------")
 	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
 	tempFile, err := os.Create(tempFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
+	fs.Debugf(f, "----------Create a temporary file end--------------")
 
 	// 3. Copy content
+	fs.Debugf(f, "----------Copy content to temp file start--------------")
 	_, err = io.Copy(tempFile, in)
-	// Close the file explicitly before uploading so it is flushed to disk
+
+	tempFile.Sync()
 	closeErr := tempFile.Close()
 	if err != nil {
 		return nil, fmt.Errorf("failed to write to temp file: %w", err)
@@ -486,15 +496,68 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	if closeErr != nil {
 		return nil, fmt.Errorf("failed to close temp file: %w", closeErr)
 	}
+	fs.Debugf(f, "----------Copy content to temp file end--------------")
 
 	// 4. Call Dis_Upload
 	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
+	fs.Debugf(f, "----------dis_upload start--------------")
+	fs.Debugf(f, "tempFilePath: %s, remotes: %s", tempFilePath, f.getUpstreamRemotes())
 	err = dis_operations.Dis_Upload([]string{tempFilePath}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
 		return nil, fmt.Errorf("Dis_Upload failed: %w", err)
 	}
+	fs.Debugf(f, "----------dis_upload end--------------")
+	
+	// 5. update entrytable.jsonl
+	fs.Debugf(f, "----------Update entrytable.jsonl start--------------")
+	remotePath := src.Remote()
+	if !strings.HasPrefix(remotePath, "/") {
+		remotePath = "/" + remotePath
+	}
+	
+	fileName := filepath.Base(remotePath)
+	
+	nextID, err := f.getNextID()
+	if err != nil {
+		fmt.Println(err)
+	}
+	
+	newNodeEntry := NodeEntry {
+		Id: nextID,
+		Path: remotePath,
+		Name: fileName,
+		Type: "file",
+		Size: src.Size(),
+	}
+	
+	// JSON 변환
+	entryJSON, err := json.Marshal(newNodeEntry)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal entry: %w", err)
+	}
 
-	// 5. Return the object
+	// Mutex 잠금이 필요할까??
+	// entrytable update
+	//f.mu.Lock()
+	file, err := os.OpenFile(entrytable_path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	
+	_, err = file.Write(entryJSON)
+	if err != nil {
+		return nil, err
+	}
+	
+	_, err = file.WriteString("\n")
+	//f.mu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("failed to update entry table: %w", err)
+	}
+	fs.Debugf(f, "----------Update entrytable.jsonl end--------------")
+
+	// 6. Return the object
 	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
 	return &Object{
 		fs:      f,
@@ -502,6 +565,44 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		size:    src.Size(),
 		modTime: src.ModTime(ctx),
 	}, nil
+}
+
+// newNodeEntry에서 사용할 새로운 ID를 받아오는 method
+func (f *Fs) getNextID() (nextID int, err error) {
+	file, err := os.Open(entrytable_path)
+	if err != nil {
+		fs.Errorf(f, "Error opening entrytable: %v", err)
+		return -1, err
+	}
+	defer file.Close()
+	
+	// Next ID
+	nextID = -1
+	
+	// json file scanner
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text() // 한 줄 읽기
+
+		// 빈 줄 건너뛰기
+		if line == "" {
+			continue
+		}
+
+		// JSON 파싱
+		var entry NodeEntry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			fmt.Printf("json 파싱 에러: %v\n", err)
+			return -1, err
+		}
+
+		// 4. 여기서 객체 하나씩 처리
+		if entry.Id > nextID {
+			nextID = entry.Id
+		}
+	}
+	
+	return nextID + 1, err
 }
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error { return nil }
