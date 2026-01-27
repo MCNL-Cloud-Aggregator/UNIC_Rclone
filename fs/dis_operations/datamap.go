@@ -1,6 +1,7 @@
 package dis_operations
 
 import (
+	"bufio" // CheckAndDeleteRemote 함수에서 사용
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,10 +10,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
-	"bufio" // CheckAndDeleteRemote 함수에서 사용
 	"strings" // CheckAndDeleteRemote 함수에서 사용
- 
+	"sync"
+
 	"github.com/rclone/rclone/fs/config"
 )
 
@@ -292,7 +292,7 @@ func CheckAndDeleteRemote(remoteName string) (bool, error) {
 
 	// 사용자에게 상황 보고
 	fmt.Printf("\n[Check] Remote '%s' affects %d files.\n", remoteName, totalAffected)
-	
+
 	if len(soleDependencyFiles) > 0 {
 		fmt.Println(" --- Files to be DELETED (backup remotes): ---")
 		for _, f := range soleDependencyFiles {
@@ -319,7 +319,7 @@ func CheckAndDeleteRemote(remoteName string) (bool, error) {
 
 	tempDir := filepath.Join(os.TempDir(), "unic_migration")
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return false, fmt.Errorf("failed to create temp dir: %w",err)
+		return false, fmt.Errorf("failed to create temp dir: %w", err)
 	}
 
 	// A. 복구 가능한 파일들 처리 (Download -> Rm)
@@ -328,7 +328,7 @@ func CheckAndDeleteRemote(remoteName string) (bool, error) {
 
 		// 1. 다운로드 (복원)
 		fmt.Printf(" -> Downloading %s for backup...\n", fileName)
-		err := Dis_Download([]string{fileName, tempDir}, false) 
+		err := Dis_Download([]string{fileName, tempDir}, false)
 		if err != nil {
 			fmt.Printf("   [Error] Download failed for %s. Skipping migration: %v\n", fileName, err)
 			continue // 다운로드 실패하면 삭제도 하지 않음 (보존)
@@ -347,16 +347,16 @@ func CheckAndDeleteRemote(remoteName string) (bool, error) {
 	}
 
 	homeDir, _ := os.UserHomeDir()
-	backupDir := filepath.Join(homeDir, ".config", "rclone","backup")
+	backupDir := filepath.Join(homeDir, ".config", "rclone", "backup")
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
-        fmt.Printf("Error creating backup dir: %v\n", err)
-        return false, err
-    }
-    fmt.Printf("Backup directory is ready at: %s\n", backupDir)
+		fmt.Printf("Error creating backup dir: %v\n", err)
+		return false, err
+	}
+	fmt.Printf("Backup directory is ready at: %s\n", backupDir)
 	// B. 유일한 의존성 파일들 처리 (Backup 후 Rm)
 	for _, fileName := range soleDependencyFiles {
 		fmt.Printf(" -> Downloading %s for backup...\n", fileName)
-		err := Dis_Download([]string{fileName, backupDir}, false) 
+		err := Dis_Download([]string{fileName, backupDir}, false)
 		if err != nil {
 			fmt.Printf("   [Error] Download failed for %s. Skipping migration: %v\n", fileName, err)
 			continue // 다운로드 실패하면 삭제도 하지 않음 (보존)
@@ -381,10 +381,10 @@ func ReuploadMigratedFiles(remoteName string) error {
 
 	fmt.Printf("\n[Post-Action] Re-uploading %d migrated files...\n", len(filesToReupload))
 
-    lb := ResourceBased
+	lb := ResourceBased
 
 	for _, f := range filesToReupload {
-		err := Dis_Upload([]string{f}, false, lb)
+		err := Dis_Upload([]string{f}, UploadTargets{UseConfig: true}, false, lb)
 		if err != nil {
 			return fmt.Errorf("failed to re-upload files: %w", err)
 		}
@@ -402,9 +402,9 @@ func ReuploadMigratedFiles(remoteName string) error {
 	if len(filesToReupload) > 0 {
 		// 파일 경로: /var/.../unic_migration/file.jpg -> 폴더 경로: /var/.../unic_migration
 		dirPath := filepath.Dir(filesToReupload[0])
-		
+
 		// 폴더 삭제 시도 (파일을 다 지웠으니 비어있어야 함)
-		err := os.Remove(dirPath) 
+		err := os.Remove(dirPath)
 		if err == nil {
 			fmt.Printf("Removed temporary directory: %s\n", dirPath)
 		} else {
