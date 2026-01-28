@@ -35,7 +35,7 @@ var copyCommandDefinitionForDown = &cobra.Command{
 
 func Dis_Download(args []string, reSignal bool) (err error) {
 
-	originalFileName := filepath.Base(args[0])
+	originalFileName := args[0]
 	_, err = GetFileInfoStruct(originalFileName)
 	if err != nil {
 		return err

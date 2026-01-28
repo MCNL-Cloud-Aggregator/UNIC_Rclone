@@ -126,9 +126,6 @@ func MakeDataMap(originalFilePath string, backendRemote string, distributedFiles
 	for _, dFile := range distributedFiles {
 		dFileMap[dFile.DistributedFile] = dFile
 	}
-
-	// add "/" prefix at backendRemote
-	backendRemote = "/" + backendRemote
 	
 	newFileInfo := FileInfo{
 		FileName:             originalFileName,
@@ -149,7 +146,7 @@ func MakeDataMap(originalFilePath string, backendRemote string, distributedFiles
 		return err
 	}
 
-	FilesMap[originalFileName] = newFileInfo
+	FilesMap[backendRemote] = newFileInfo
 	return writeJsonFile(jsonFilePath, FilesMap)
 }
 
@@ -282,7 +279,7 @@ func UpdateFileFlag(originalFileName string, state string) error {
 }
 
 // updating distributedfile check flag after uploading, downloading or removing
-func updateDistributedFile(originalFileName, distributedFileName string, updateFunc func(*DistributedFile) error) error {
+func updateDistributedFile(backendRemote, distributedFileName string, updateFunc func(*DistributedFile) error) error {
 	jsonFileMutex.Lock()
 	defer jsonFileMutex.Unlock()
 
@@ -291,14 +288,14 @@ func updateDistributedFile(originalFileName, distributedFileName string, updateF
 		return fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	fileInfo, exists := filesMap[originalFileName]
+	fileInfo, exists := filesMap[backendRemote]
 	if !exists {
-		return fmt.Errorf("file '%s' not found", originalFileName)
+		return fmt.Errorf("file '%s' not found", backendRemote)
 	}
 
 	dFile, exists := fileInfo.DistributedFileInfos[distributedFileName]
 	if !exists {
-		return fmt.Errorf("distributed file '%s' not found for original file '%s'", distributedFileName, originalFileName)
+		return fmt.Errorf("distributed file '%s' not found for original file '%s'", distributedFileName, backendRemote)
 	}
 
 	// Apply the update function
@@ -307,7 +304,7 @@ func updateDistributedFile(originalFileName, distributedFileName string, updateF
 	}
 
 	fileInfo.DistributedFileInfos[distributedFileName] = dFile
-	filesMap[originalFileName] = fileInfo
+	filesMap[backendRemote] = fileInfo
 
 	err = writeJsonFile(getJsonFilePath(), filesMap)
 	if err != nil {
@@ -318,15 +315,15 @@ func updateDistributedFile(originalFileName, distributedFileName string, updateF
 	return nil
 }
 
-func UpdateDistributedFile_CheckFlag(originalFileName, distributedFileName string, newCheck bool) error {
-	return updateDistributedFile(originalFileName, distributedFileName, func(dFile *DistributedFile) error {
+func UpdateDistributedFile_CheckFlag(backendRemote, distributedFileName string, newCheck bool) error {
+	return updateDistributedFile(backendRemote, distributedFileName, func(dFile *DistributedFile) error {
 		dFile.Check = newCheck
 		return nil
 	})
 }
 
-func UpdateDistributedFile_CheckFlagAndRemote(originalFileName, distributedFileName string, newCheck bool, remote Remote) error {
-	return updateDistributedFile(originalFileName, distributedFileName, func(dFile *DistributedFile) error {
+func UpdateDistributedFile_CheckFlagAndRemote(backendRemote, distributedFileName string, newCheck bool, remote Remote) error {
+	return updateDistributedFile(backendRemote, distributedFileName, func(dFile *DistributedFile) error {
 		dFile.Check = newCheck
 		dFile.Remote = remote
 		return nil
@@ -334,7 +331,7 @@ func UpdateDistributedFile_CheckFlagAndRemote(originalFileName, distributedFileN
 }
 
 // resetting file check flag after finishing operation
-func ResetCheckFlag(originalFileName string) error {
+func ResetCheckFlag(backendRemote string) error {
 	jsonFileMutex.Lock()
 	defer jsonFileMutex.Unlock()
 
@@ -343,9 +340,9 @@ func ResetCheckFlag(originalFileName string) error {
 		return fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	fileInfo, exists := filesMap[originalFileName]
+	fileInfo, exists := filesMap[backendRemote]
 	if !exists {
-		return fmt.Errorf("failed to reset flag: original file '%s' not found", originalFileName)
+		return fmt.Errorf("failed to reset flag: backendRemote'%s' not found", backendRemote)
 	}
 
 	fileInfo.Flag = false
@@ -355,7 +352,7 @@ func ResetCheckFlag(originalFileName string) error {
 		fileInfo.DistributedFileInfos[key] = dFile
 	}
 
-	filesMap[originalFileName] = fileInfo
+	filesMap[backendRemote] = fileInfo
 
 	if err := writeJsonFile(getJsonFilePath(), filesMap); err != nil {
 		return fmt.Errorf("failed to write updated JSON: %v", err)
