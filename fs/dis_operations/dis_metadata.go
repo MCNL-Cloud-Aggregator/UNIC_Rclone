@@ -20,6 +20,7 @@ const (
 // The Top Data Structure
 type FileInfo struct {
 	FileName             string                     `json:"original_file_name"`
+	FilePath             string                     `json:"backend_file_path"`
 	FileSize             int64                      `json:"original_file_size"`
 	DisFileSize          int64                      `json:"distributed_file_size"`
 	Shard                int                        `json:"shard_count"`

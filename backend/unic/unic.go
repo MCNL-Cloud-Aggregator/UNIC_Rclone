@@ -262,6 +262,8 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (entry fs.Object, err
 	return f.newObject(ctx, remote, nil)
 }
 
+// entrytable을 읽는 코드가 이거 말고도 있음
+// 나중에 entrytable 찾는 코드를 method로 만들어서 재사용성을 높이는 방안 생각
 func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
@@ -478,6 +480,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	// 2. Create the file with the correct name
 	fs.Debugf(f, "----------Create a temporary file start--------------")
 	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
+	fs.Debugf(f, "tempFilePath: %s", tempFilePath)
 	tempFile, err := os.Create(tempFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
@@ -502,7 +505,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
 	fs.Debugf(f, "----------dis_upload start--------------")
 	fs.Debugf(f, "tempFilePath: %s, remotes: %s", tempFilePath, f.getUpstreamRemotes())
-	err = dis_operations.Dis_Upload([]string{tempFilePath}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
+	err = dis_operations.Dis_Upload([]string{tempFilePath, src.Remote()}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
 		return nil, fmt.Errorf("Dis_Upload failed: %w", err)
 	}
@@ -693,7 +696,15 @@ type tempFileCloser struct {
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
 	return nil
 }
-func (o *Object) Remove(ctx context.Context) error { return nil }
+
+func (o *Object) Remove(ctx context.Context) error {
+	//fs.Debugf(o, "----------Remove method start----------")
+	//// dis_rm 수행
+	
+	//err := dis_operations.Dis_rm(o.remote, false)
+	
+	return nil
+}
 
 func multithread(num int, fn func(int)) {
 	var wg sync.WaitGroup

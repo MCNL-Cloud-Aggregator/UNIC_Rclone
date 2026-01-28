@@ -46,6 +46,7 @@ var copyCommandDefinition = &cobra.Command{
 
 func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer LoadBalancerType) error {
 	absolutePath, err := dis_init(args[0])
+	backendRemote := args[1]
 
 	if err != nil {
 		return err
@@ -95,7 +96,7 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 			}
 		}
 
-		hashedNamesMap, distributedFileArray, err = prepareUpload(absolutePath, target)
+		hashedNamesMap, distributedFileArray, err = prepareUpload(absolutePath, backendRemote, target)
 		if err != nil {
 			return err
 		}
@@ -142,7 +143,7 @@ func createHashNames(distributedFileArray []DistributedFile) (hashNameMap map[st
 	return hashNameMap, errs
 }
 
-func prepareUpload(absolutePath string, target UploadTargets) (hashNameMap map[string]string, distributedFileInfos []DistributedFile, err error) {
+func prepareUpload(absolutePath string, backendRemote string, target UploadTargets) (hashNameMap map[string]string, distributedFileInfos []DistributedFile, err error) {
 	dis_names, checksums, shardSize, padding, shard, parity := reedsolomon.DoEncode(absolutePath, tryGetPassword())
 	fmt.Println("Shard:", shard)
 	fmt.Println("Parity:", parity)
@@ -178,7 +179,7 @@ func prepareUpload(absolutePath string, target UploadTargets) (hashNameMap map[s
 		return nil, nil, fmt.Errorf("errors occurred during hashing: %v", errs)
 	}
 
-	err = MakeDataMap(absolutePath, distributedFileInfos, shardSize, padding, shard, parity)
+	err = MakeDataMap(absolutePath, backendRemote, distributedFileInfos, shardSize, padding, shard, parity)
 	if err != nil {
 		return nil, nil, err
 	}
