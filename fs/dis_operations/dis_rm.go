@@ -35,6 +35,7 @@ func Dis_rm(arg []string, reSignal bool) (err error) {
 		if err != nil {
 			return err
 		}
+		fmt.Printf("dis_rm: originalFileName: %s\n", originalFileName)
 		distributedFileArray, err = GetDistributedFileStruct(originalFileName)
 		if err != nil {
 			return err

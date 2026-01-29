@@ -127,6 +127,9 @@ func MakeDataMap(originalFilePath string, backendRemote string, distributedFiles
 		dFileMap[dFile.DistributedFile] = dFile
 	}
 	
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
 	newFileInfo := FileInfo{
 		FileName:             originalFileName,
 		FilePath:			  backendRemote,
@@ -146,7 +149,7 @@ func MakeDataMap(originalFilePath string, backendRemote string, distributedFiles
 		return err
 	}
 
-	FilesMap[backendRemote] = newFileInfo
+	FilesMap[backendRemoteHashString] = newFileInfo
 	return writeJsonFile(jsonFilePath, FilesMap)
 }
 
@@ -166,13 +169,16 @@ func GetFileInfoStruct(backendRemote string) (FileInfo, error) {
 	if err != nil {
 		return FileInfo{}, err
 	}
-
-	if fileInfo, exists := filesMap[backendRemote]; exists {
+	
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	if fileInfo, exists := filesMap[backendRemoteHashString]; exists {
 		fmt.Printf("FileName: %s, FilePath: %s\n", fileInfo.FileName, fileInfo.FilePath)
 		return fileInfo, nil
 	}
 
-	return FileInfo{}, fmt.Errorf("file name '%s' not found", backendRemote)
+	return FileInfo{}, fmt.Errorf("GetFileInfoStruct file name '%s' not found", backendRemote)
 }
 
 func DoesFileStructExist(fileName string) (bool, error) {
@@ -191,9 +197,15 @@ func GetDistributedFileStruct(backendRemote string) ([]DistributedFile, error) {
 		return nil, err
 	}
 
-	fileInfo, exists := filesMap[backendRemote]
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	fileInfo, exists := filesMap[backendRemoteHashString]
+	for fileInfo_temp, _ := range filesMap {
+		fmt.Printf("filesMap FileName: %s, FilePath: %s\n", filesMap[fileInfo_temp].FileName, filesMap[fileInfo_temp].FilePath)
+	}
 	if !exists {
-		return nil, fmt.Errorf("file name '%s' not found", backendRemote)
+		return nil, fmt.Errorf("GetDistributedFileStruct file name '%s' not found", backendRemote)
 	}
 
 	disFiles := make([]DistributedFile, 0, len(fileInfo.DistributedFileInfos))
@@ -254,7 +266,7 @@ func CheckFlagAndState() (bool, string, string) {
 
 // Updating file flag to true.
 // this function is used when downloading or deleting a file.
-func UpdateFileFlag(originalbackendRemoteFileName string, state string) error {
+func UpdateFileFlag(backendRemote string, state string) error {
 	jsonFileMutex.Lock()
 	defer jsonFileMutex.Unlock()
 
@@ -263,14 +275,17 @@ func UpdateFileFlag(originalbackendRemoteFileName string, state string) error {
 		return fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	fileInfo, exists := filesMap[backendRemote]
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	fileInfo, exists := filesMap[backendRemoteHashString]
 	if !exists {
 		return fmt.Errorf("file '%s' not found\n", backendRemote)
 	}
 
 	fileInfo.Flag = true
 	fileInfo.State = state
-	filesMap[backendRemote] = fileInfo
+	filesMap[backendRemoteHashString] = fileInfo
 
 	if err := writeJsonFile(getJsonFilePath(), filesMap); err != nil {
 		return fmt.Errorf("failed to write updated JSON: %v", err)
@@ -288,8 +303,11 @@ func updateDistributedFile(backendRemote, distributedFileName string, updateFunc
 	if err != nil {
 		return fmt.Errorf("failed to read JSON file: %v", err)
 	}
-
-	fileInfo, exists := filesMap[backendRemote]
+	
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	fileInfo, exists := filesMap[backendRemoteHashString]
 	if !exists {
 		return fmt.Errorf("file '%s' not found", backendRemote)
 	}
@@ -305,7 +323,7 @@ func updateDistributedFile(backendRemote, distributedFileName string, updateFunc
 	}
 
 	fileInfo.DistributedFileInfos[distributedFileName] = dFile
-	filesMap[backendRemote] = fileInfo
+	filesMap[backendRemoteHashString] = fileInfo
 
 	err = writeJsonFile(getJsonFilePath(), filesMap)
 	if err != nil {
@@ -341,7 +359,10 @@ func ResetCheckFlag(backendRemote string) error {
 		return fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	fileInfo, exists := filesMap[backendRemote]
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	fileInfo, exists := filesMap[backendRemoteHashString]
 	if !exists {
 		return fmt.Errorf("failed to reset flag: backendRemote'%s' not found", backendRemote)
 	}
@@ -353,7 +374,7 @@ func ResetCheckFlag(backendRemote string) error {
 		fileInfo.DistributedFileInfos[key] = dFile
 	}
 
-	filesMap[backendRemote] = fileInfo
+	filesMap[backendRemoteHashString] = fileInfo
 
 	if err := writeJsonFile(getJsonFilePath(), filesMap); err != nil {
 		return fmt.Errorf("failed to write updated JSON: %v", err)
@@ -401,7 +422,10 @@ func GetUncompletedFileInfo(backendRemote string) ([]DistributedFile, error) {
 		return nil, fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	fileInfo, exists := filesMap[backendRemote]
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	fileInfo, exists := filesMap[backendRemoteHashString]
 	if !exists {
 		return nil, fmt.Errorf("original file '%s' not found", backendRemote)
 	}

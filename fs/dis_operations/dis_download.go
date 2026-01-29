@@ -36,6 +36,7 @@ var copyCommandDefinitionForDown = &cobra.Command{
 func Dis_Download(args []string, reSignal bool) (err error) {
 
 	backendRemote := args[0]
+	fmt.Printf("Dis_Download backendRemote1: %s\n", backendRemote)
 	_, err = GetFileInfoStruct(backendRemote)
 	if err != nil {
 		return err
@@ -94,9 +95,11 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 		checksums[each.DistributedFile] = each.Checksum
 	}
 
+	//os.Exit(1)
 	fmt.Printf("---DoDecode start---\n")
-	originalFileName := filepath.Base(backendRemote)
-	err = reedsolomon.DoDecode(originalFileName, absolutePath, fileInfo.Padding, checksums, fileInfo.Shard, fileInfo.Parity, tryGetPassword())
+	fmt.Printf("Dis_Download backendRemote2: %s\n", backendRemote)
+	//originalFileName := filepath.Base(backendRemote)
+	err = reedsolomon.DoDecode(backendRemote, absolutePath, fileInfo.Padding, checksums, fileInfo.Shard, fileInfo.Parity, tryGetPassword())
 	if err != nil {
 		result := ShowDescription_RemoveFile(backendRemote, err)
 		if result {
@@ -213,6 +216,7 @@ func downloadFile(fileInfo DistributedFile, shardDir, backendRemote string, mu *
 	source := fmt.Sprintf("%s:%s/%s", fileInfo.Remote.Name, remoteDirectory, hashedFileName)
 	fmt.Printf("Downloading shard %s to %s\n", source, shardDir)
 	downloadedFilePath := path.Join(shardDir, hashedFileName)
+	fmt.Printf("downloadedFilePath: %s\n", downloadedFilePath)
 
 	if err := remoteCallCopyforDown([]string{source, shardDir}); err != nil {
 		mu.Lock()
