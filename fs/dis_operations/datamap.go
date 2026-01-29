@@ -161,17 +161,18 @@ func RemoveFileFromMetadata(fileName string) error {
 	return writeJsonFile(getJsonFilePath(), filesMap)
 }
 
-func GetFileInfoStruct(fileName string) (FileInfo, error) {
+func GetFileInfoStruct(backendRemote string) (FileInfo, error) {
 	filesMap, err := readJsonFile()
 	if err != nil {
 		return FileInfo{}, err
 	}
 
-	if fileInfo, exists := filesMap[fileName]; exists {
+	if fileInfo, exists := filesMap[backendRemote]; exists {
+		fmt.Printf("FileName: %s, FilePath: %s\n", fileInfo.FileName, fileInfo.FilePath)
 		return fileInfo, nil
 	}
 
-	return FileInfo{}, fmt.Errorf("file name '%s' not found", fileName)
+	return FileInfo{}, fmt.Errorf("file name '%s' not found", backendRemote)
 }
 
 func DoesFileStructExist(fileName string) (bool, error) {
@@ -184,15 +185,15 @@ func DoesFileStructExist(fileName string) (bool, error) {
 	return exists, nil
 }
 
-func GetDistributedFileStruct(fileName string) ([]DistributedFile, error) {
+func GetDistributedFileStruct(backendRemote string) ([]DistributedFile, error) {
 	filesMap, err := readJsonFile()
 	if err != nil {
 		return nil, err
 	}
 
-	fileInfo, exists := filesMap[fileName]
+	fileInfo, exists := filesMap[backendRemote]
 	if !exists {
-		return nil, fmt.Errorf("file name '%s' not found", fileName)
+		return nil, fmt.Errorf("file name '%s' not found", backendRemote)
 	}
 
 	disFiles := make([]DistributedFile, 0, len(fileInfo.DistributedFileInfos))
@@ -253,7 +254,7 @@ func CheckFlagAndState() (bool, string, string) {
 
 // Updating file flag to true.
 // this function is used when downloading or deleting a file.
-func UpdateFileFlag(originalFileName string, state string) error {
+func UpdateFileFlag(originalbackendRemoteFileName string, state string) error {
 	jsonFileMutex.Lock()
 	defer jsonFileMutex.Unlock()
 
@@ -262,14 +263,14 @@ func UpdateFileFlag(originalFileName string, state string) error {
 		return fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	fileInfo, exists := filesMap[originalFileName]
+	fileInfo, exists := filesMap[backendRemote]
 	if !exists {
-		return fmt.Errorf("file '%s' not found\n", originalFileName)
+		return fmt.Errorf("file '%s' not found\n", backendRemote)
 	}
 
 	fileInfo.Flag = true
 	fileInfo.State = state
-	filesMap[originalFileName] = fileInfo
+	filesMap[backendRemote] = fileInfo
 
 	if err := writeJsonFile(getJsonFilePath(), filesMap); err != nil {
 		return fmt.Errorf("failed to write updated JSON: %v", err)
@@ -394,15 +395,15 @@ func GetOriginalFileNameList(originalFileName string, hashedFileNameList []strin
 }
 
 // remove하다 멈췄을 때 어떤 파일을 마저 지워야하는지 알려주는 함수
-func GetUncompletedFileInfo(originalFileName string) ([]DistributedFile, error) {
+func GetUncompletedFileInfo(backendRemote string) ([]DistributedFile, error) {
 	filesMap, err := readJsonFile()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	fileInfo, exists := filesMap[originalFileName]
+	fileInfo, exists := filesMap[backendRemote]
 	if !exists {
-		return nil, fmt.Errorf("original file '%s' not found", originalFileName)
+		return nil, fmt.Errorf("original file '%s' not found", backendRemote)
 	}
 
 	var uncompleted []DistributedFile
