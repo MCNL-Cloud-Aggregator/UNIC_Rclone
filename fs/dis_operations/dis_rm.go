@@ -15,28 +15,28 @@ var PERM_DEL_FLAG = "--drive-use-trash=false"
 
 func Dis_rm(arg []string, reSignal bool) (err error) {
 
-	originalFileName := arg[0]
+	backendRemote := arg[0]
 	var distributedFileArray []DistributedFile
 
-	_, err = GetFileInfoStruct(originalFileName)
+	_, err = GetFileInfoStruct(backendRemote)
 	if err != nil {
 		return err
 	}
 
 	// if re-rm (due to previous failure)
 	if reSignal {
-		distributedFileArray, err = GetUncompletedFileInfo(originalFileName)
+		distributedFileArray, err = GetUncompletedFileInfo(backendRemote)
 		if err != nil {
 			return err
 		}
 
 	} else {
-		err = UpdateFileFlag(originalFileName, "rm")
+		err = UpdateFileFlag(backendRemote, "rm")
 		if err != nil {
 			return err
 		}
-		fmt.Printf("dis_rm: originalFileName: %s\n", originalFileName)
-		distributedFileArray, err = GetDistributedFileStruct(originalFileName)
+		fmt.Printf("dis_rm: backendRemote: %s\n", backendRemote)
+		distributedFileArray, err = GetDistributedFileStruct(backendRemote)
 		if err != nil {
 			return err
 		}
@@ -44,23 +44,23 @@ func Dis_rm(arg []string, reSignal bool) (err error) {
 
 	start := time.Now()
 
-	if err := startRmFileGoroutine(originalFileName, distributedFileArray); err != nil {
+	if err := startRmFileGoroutine(backendRemote, distributedFileArray); err != nil {
 		return err
 	}
 
 	elapsed := time.Since(start)
 	fmt.Printf("Time taken for dis_rm: %s\n", elapsed)
 
-	err = ResetCheckFlag(originalFileName)
+	err = ResetCheckFlag(backendRemote)
 	if err != nil {
 		return err
 	}
-	err = RemoveFileFromMetadata(originalFileName)
+	err = RemoveFileFromMetadata(backendRemote)
 	if err != nil {
 		return fmt.Errorf("failed to remove file from metadata: %v", err)
 	}
 
-	fmt.Printf("Successfully deleted all parts of %s and updated metadata.\n", originalFileName)
+	fmt.Printf("Successfully deleted all parts of %s and updated metadata.\n", backendRemote)
 
 	return nil
 }
@@ -79,7 +79,7 @@ func remoteCallDeleteFile(args []string) (err error) {
 	return nil
 }
 
-func startRmFileGoroutine(originalFileName string, distributedFileArray []DistributedFile) (err error) {
+func startRmFileGoroutine(backendRemote string, distributedFileArray []DistributedFile) (err error) {
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(distributedFileArray))
 
@@ -87,7 +87,7 @@ func startRmFileGoroutine(originalFileName string, distributedFileArray []Distri
 	for _, info := range distributedFileArray {
 		if info.Remote.String() == "|" {
 			fmt.Printf("Empty Remote\n")
-			err = UpdateDistributedFile_CheckFlag(originalFileName, info.DistributedFile, true)
+			err = UpdateDistributedFile_CheckFlag(backendRemote, info.DistributedFile, true)
 			if err != nil {
 				fmt.Printf("UpdateDistributedFile_CheckFlag 에러 : %v\n", err)
 			}
@@ -110,7 +110,7 @@ func startRmFileGoroutine(originalFileName string, distributedFileArray []Distri
 			}
 
 			// Update flags
-			err = UpdateDistributedFile_CheckFlag(originalFileName, info.DistributedFile, true)
+			err = UpdateDistributedFile_CheckFlag(backendRemote, info.DistributedFile, true)
 			if err != nil {
 				fmt.Printf("UpdateDistributedFile_CheckFlag 에러 : %v\n", err)
 			}

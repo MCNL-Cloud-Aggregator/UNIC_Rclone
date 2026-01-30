@@ -481,6 +481,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	// 2. Create the file with the correct name
 	fs.Debugf(f, "----------Create a temporary file start--------------")
 	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
+	fs.Debugf(f, "src.Remote(): %s", src.Remote())
 	fs.Debugf(f, "tempFilePath: %s", tempFilePath)
 	tempFile, err := os.Create(tempFilePath)
 	if err != nil {
@@ -515,9 +516,9 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	// 5. update entrytable.jsonl
 	fs.Debugf(f, "----------Update entrytable.jsonl start--------------")
 	remotePath := src.Remote()
-	if !strings.HasPrefix(remotePath, "/") {
-		remotePath = "/" + remotePath
-	}
+	//if !strings.HasPrefix(remotePath, "/") {
+	//	remotePath = "/" + remotePath
+	//}
 	
 	fileName := filepath.Base(remotePath)
 	
@@ -700,10 +701,15 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 }
 
 func (o *Object) Remove(ctx context.Context) error {
-	//fs.Debugf(o, "----------Remove method start----------")
-	//// dis_rm 수행
+	fs.Debugf(o, "----------Remove method start----------")
 	
-	//err := dis_operations.Dis_rm(o.remote, false)
+	// dis_rm 수행
+	fs.Debugf(o, "----------dis_operations.Dis_rm start----------")
+	err := dis_operations.Dis_rm([]string{o.remote}, false)
+	if err != nil {
+		return err
+	}
+	fs.Debugf(o, "----------dis_operations.Dis_rm end----------")
 	
 	return nil
 }

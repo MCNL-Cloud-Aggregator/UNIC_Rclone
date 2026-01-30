@@ -46,7 +46,8 @@ var copyCommandDefinition = &cobra.Command{
 
 func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer LoadBalancerType) error {
 	absolutePath, err := dis_init(args[0])
-	backendRemote := "/" + args[1]
+	//backendRemote := "/" + args[1]
+	backendRemote := args[1]
 
 	if err != nil {
 		return err
