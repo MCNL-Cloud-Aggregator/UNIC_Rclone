@@ -518,17 +518,10 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	// 5. update entrytable.jsonl
 	fs.Debugf(f, "----------Update entrytable.jsonl start--------------")
 	remotePath := src.Remote()
-<<<<<<< HEAD
 	//if !strings.HasPrefix(remotePath, "/") {
 	//	remotePath = "/" + remotePath
 	//}
 	
-=======
-	if !strings.HasPrefix(remotePath, "/") {
-		remotePath = "/" + remotePath
-	}
-
->>>>>>> main
 	fileName := filepath.Base(remotePath)
 
 	nextID, err := f.getNextID()
