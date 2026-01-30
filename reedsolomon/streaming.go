@@ -151,7 +151,8 @@ func DoEncode(fname string, backendRemote string, password string) ([]string, []
 	//_, file := filepath.Split(encFile)
 
 	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
-	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])	
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	backendRemoteHashString = backendRemoteHashString + fileCryptExtension
 	
 	// Get path and checksum of all shards
 	for i := range out {
@@ -371,7 +372,9 @@ func DoDecode(backendRemote string, outfn string, padding int64, confChecksums m
 		}
 
 	}
+	fmt.Println("outfn: ", outfn)
 	outfn = filepath.Join(outfn, fname)
+	fmt.Println("outfn: ", outfn)
 
 	fmt.Println("Writing data to", outfn)
 	f, err := os.Create(outfn)
@@ -399,6 +402,16 @@ func DoDecode(backendRemote string, outfn string, padding int64, confChecksums m
 	}
 	f.Close()
 
+	// Renaming
+	originalFileName := filepath.Base(backendRemote)
+	finalRestoredPath := filepath.Join(filepath.Dir(originFile), originalFileName)
+    
+    fmt.Printf("Renaming: %s -> %s\n", originFile, finalRestoredPath)
+    err = os.Rename(originFile, finalRestoredPath)
+    if err != nil {
+        return fmt.Errorf("failed to rename to original name: %v", err)
+    }
+	
 	// Remove the Decodeded file
 	err = os.Remove(outfn)
 	if err != nil {
