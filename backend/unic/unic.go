@@ -1,6 +1,7 @@
 package unic
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"bufio"
 
 	"github.com/rclone/rclone/backend/unic/common"
 	"github.com/rclone/rclone/fs"
@@ -24,11 +24,13 @@ import (
 )
 
 // inodetable path
-//var entrytable_path = "/home/yrcho/.config/rclone/entrytable.jsonl"
-var entrytable_path = "/UNIC_Rclone/entrytable.jsonl"
+// var entrytable_path = "/home/yrcho/.config/rclone/entrytable.jsonl"
+var entrytable_path string
 
 // Register with Fs
 func init() {
+	homeDir, _ := os.UserHomeDir()
+	entrytable_path = filepath.Join(homeDir, ".config", "rclone", "entrytable.jsonl")
 	fs.Register(&fs.RegInfo{
 		Name:        "unic",
 		Description: "Unified Namespace of Integrated Cloudstorage",
@@ -512,29 +514,36 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		return nil, fmt.Errorf("Dis_Upload failed: %w", err)
 	}
 	fs.Debugf(f, "----------dis_upload end--------------")
-	
+
 	// 5. update entrytable.jsonl
 	fs.Debugf(f, "----------Update entrytable.jsonl start--------------")
 	remotePath := src.Remote()
+<<<<<<< HEAD
 	//if !strings.HasPrefix(remotePath, "/") {
 	//	remotePath = "/" + remotePath
 	//}
 	
+=======
+	if !strings.HasPrefix(remotePath, "/") {
+		remotePath = "/" + remotePath
+	}
+
+>>>>>>> main
 	fileName := filepath.Base(remotePath)
-	
+
 	nextID, err := f.getNextID()
 	if err != nil {
 		fmt.Println(err)
 	}
-	
-	newNodeEntry := NodeEntry {
-		Id: nextID,
+
+	newNodeEntry := NodeEntry{
+		Id:   nextID,
 		Path: remotePath,
 		Name: fileName,
 		Type: "file",
 		Size: src.Size(),
 	}
-	
+
 	// JSON 변환
 	entryJSON, err := json.Marshal(newNodeEntry)
 	if err != nil {
@@ -549,12 +558,12 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		return nil, err
 	}
 	defer file.Close()
-	
+
 	_, err = file.Write(entryJSON)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	_, err = file.WriteString("\n")
 	//f.mu.Unlock()
 	if err != nil {
@@ -580,10 +589,10 @@ func (f *Fs) getNextID() (nextID int, err error) {
 		return -1, err
 	}
 	defer file.Close()
-	
+
 	// Next ID
 	nextID = -1
-	
+
 	// json file scanner
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -606,7 +615,7 @@ func (f *Fs) getNextID() (nextID int, err error) {
 			nextID = entry.Id
 		}
 	}
-	
+
 	return nextID + 1, err
 }
 
