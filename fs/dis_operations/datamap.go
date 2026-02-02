@@ -1,7 +1,6 @@
 package dis_operations
 
 import (
-	"bufio" // CheckAndDeleteRemote 함수에서 사용
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings" // CheckAndDeleteRemote 함수에서 사용
 	"sync"
 
 	"github.com/rclone/rclone/fs/config"
@@ -106,7 +104,7 @@ func GetDistributedInfo(fileName string, remote Remote, checksum string, target 
 }
 
 // making file info about original file
-func MakeDataMap(originalFilePath string, distributedFiles []DistributedFile, disFileSize int64, paddingAmount int64, shard int, parity int) error {
+func MakeDataMap(originalFilePath string, backendRemote string, distributedFiles []DistributedFile, disFileSize int64, paddingAmount int64, shard int, parity int) error {
 	if originalFilePath == "" {
 		return errors.New("originalFilePath cannot be empty")
 	}
@@ -128,9 +126,13 @@ func MakeDataMap(originalFilePath string, distributedFiles []DistributedFile, di
 	for _, dFile := range distributedFiles {
 		dFileMap[dFile.DistributedFile] = dFile
 	}
-
+	
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
 	newFileInfo := FileInfo{
 		FileName:             originalFileName,
+		FilePath:			  backendRemote,
 		FileSize:             originalFileInfo.Size(),
 		DisFileSize:          disFileSize,
 		Shard:                shard,
@@ -147,7 +149,7 @@ func MakeDataMap(originalFilePath string, distributedFiles []DistributedFile, di
 		return err
 	}
 
-	FilesMap[originalFileName] = newFileInfo
+	FilesMap[backendRemoteHashString] = newFileInfo
 	return writeJsonFile(jsonFilePath, FilesMap)
 }
 
@@ -162,17 +164,21 @@ func RemoveFileFromMetadata(fileName string) error {
 	return writeJsonFile(getJsonFilePath(), filesMap)
 }
 
-func GetFileInfoStruct(fileName string) (FileInfo, error) {
+func GetFileInfoStruct(backendRemote string) (FileInfo, error) {
 	filesMap, err := readJsonFile()
 	if err != nil {
 		return FileInfo{}, err
 	}
-
-	if fileInfo, exists := filesMap[fileName]; exists {
+	
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	if fileInfo, exists := filesMap[backendRemoteHashString]; exists {
+		fmt.Printf("FileName: %s, FilePath: %s\n", fileInfo.FileName, fileInfo.FilePath)
 		return fileInfo, nil
 	}
 
-	return FileInfo{}, fmt.Errorf("file name '%s' not found", fileName)
+	return FileInfo{}, fmt.Errorf("GetFileInfoStruct file name '%s' not found", backendRemote)
 }
 
 func DoesFileStructExist(fileName string) (bool, error) {
@@ -185,15 +191,21 @@ func DoesFileStructExist(fileName string) (bool, error) {
 	return exists, nil
 }
 
-func GetDistributedFileStruct(fileName string) ([]DistributedFile, error) {
+func GetDistributedFileStruct(backendRemote string) ([]DistributedFile, error) {
 	filesMap, err := readJsonFile()
 	if err != nil {
 		return nil, err
 	}
 
-	fileInfo, exists := filesMap[fileName]
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	fileInfo, exists := filesMap[backendRemoteHashString]
+	for fileInfo_temp, _ := range filesMap {
+		fmt.Printf("filesMap FileName: %s, FilePath: %s\n", filesMap[fileInfo_temp].FileName, filesMap[fileInfo_temp].FilePath)
+	}
 	if !exists {
-		return nil, fmt.Errorf("file name '%s' not found", fileName)
+		return nil, fmt.Errorf("GetDistributedFileStruct file name '%s' not found", backendRemote)
 	}
 
 	disFiles := make([]DistributedFile, 0, len(fileInfo.DistributedFileInfos))
@@ -252,176 +264,9 @@ func CheckFlagAndState() (bool, string, string) {
 	return false, "", ""
 }
 
-// 재업로드해야 할 파일 목록을 임시 저장할 공간
-var filesToReupload []string
-
-// 1. 삭제 전 실행 (Pre-Hook)
-func CheckAndDeleteRemote(remoteName string) (bool, error) {
-	filesToReupload = []string{}
-
-	filesMap, err := readJsonFile()
-	if err != nil {
-		return false, fmt.Errorf("failed to read datamap: %w", err)
-	}
-
-	var soleDependencyFiles []string // 이 Remote에만 있는 파일 (삭제됨)
-	var redundancyFiles []string     // 다른 Remote에도 있는 파일 (복구 가능)
-
-	for fileName, fileInfo := range filesMap {
-		usedRemotes := make(map[string]bool)
-		for _, shard := range fileInfo.DistributedFileInfos {
-			usedRemotes[shard.Remote.Name] = true
-		}
-
-		// 해당 Remote를 사용하고 있는지 확인
-		if usedRemotes[remoteName] {
-			// Remote가 1개뿐인데 그게 삭제 대상이라면 -> 유일한 의존성 (삭제 불가피)
-			if len(usedRemotes) == 1 {
-				soleDependencyFiles = append(soleDependencyFiles, fileName)
-			} else {
-				// 다른 Remote에도 파편이 있음 -> 복구(마이그레이션) 가능
-				redundancyFiles = append(redundancyFiles, fileName)
-			}
-		}
-	}
-
-	totalAffected := len(soleDependencyFiles) + len(redundancyFiles)
-	if totalAffected == 0 {
-		return true, nil
-	}
-
-	// 사용자에게 상황 보고
-	fmt.Printf("\n[Check] Remote '%s' affects %d files.\n", remoteName, totalAffected)
-
-	if len(soleDependencyFiles) > 0 {
-		fmt.Println(" --- Files to be DELETED (backup remotes): ---")
-		for _, f := range soleDependencyFiles {
-			fmt.Println("  - " + f)
-		}
-	}
-	if len(redundancyFiles) > 0 {
-		fmt.Println(" --- Files to be MIGRATED (Download -> Rm -> Re-Upload): ---")
-		for _, f := range redundancyFiles {
-			fmt.Println("  - " + f)
-		}
-	}
-
-	fmt.Print("\nProceed with this operation? (y/N): ")
-	reader := bufio.NewReader(os.Stdin)
-	response, _ := reader.ReadString('\n')
-	response = strings.TrimSpace(strings.ToLower(response))
-
-	if response != "y" && response != "yes" {
-		return false, nil
-	}
-
-	// --- 작업 시작 ---
-
-	tempDir := filepath.Join(os.TempDir(), "unic_migration")
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return false, fmt.Errorf("failed to create temp dir: %w", err)
-	}
-
-	// A. 복구 가능한 파일들 처리 (Download -> Rm)
-	for _, fileName := range redundancyFiles {
-		fmt.Printf("[Migrating] Processing %s...\n", fileName)
-
-		// 1. 다운로드 (복원)
-		fmt.Printf(" -> Downloading %s for backup...\n", fileName)
-		err := Dis_Download([]string{fileName, tempDir}, false)
-		if err != nil {
-			fmt.Printf("   [Error] Download failed for %s. Skipping migration: %v\n", fileName, err)
-			continue // 다운로드 실패하면 삭제도 하지 않음 (보존)
-		}
-
-		// 2. 메타데이터 및 파편 삭제 (Dis_rm)
-		fmt.Printf(" -> Removing old metadata/shards for %s...\n", fileName)
-		err = Dis_rm([]string{fileName}, false)
-		if err != nil {
-			return false, fmt.Errorf("failed Dis_rm during migration of %s: %w", fileName, err)
-		}
-
-		// 3. 재업로드 목록에 추가 (나중에 Post-Hook에서 처리)
-		fullPath := filepath.Join(tempDir, fileName)
-		filesToReupload = append(filesToReupload, fullPath)
-	}
-
-	homeDir, _ := os.UserHomeDir()
-	backupDir := filepath.Join(homeDir, ".config", "rclone", "backup")
-	if err := os.MkdirAll(backupDir, 0755); err != nil {
-		fmt.Printf("Error creating backup dir: %v\n", err)
-		return false, err
-	}
-	fmt.Printf("Backup directory is ready at: %s\n", backupDir)
-	// B. 유일한 의존성 파일들 처리 (Backup 후 Rm)
-	for _, fileName := range soleDependencyFiles {
-		fmt.Printf(" -> Downloading %s for backup...\n", fileName)
-		err := Dis_Download([]string{fileName, backupDir}, false)
-		if err != nil {
-			fmt.Printf("   [Error] Download failed for %s. Skipping migration: %v\n", fileName, err)
-			continue // 다운로드 실패하면 삭제도 하지 않음 (보존)
-		}
-
-		fmt.Printf("[Deleting] Removing %s (Sole dependency)...\n", fileName)
-		err = Dis_rm([]string{fileName}, false)
-		if err != nil {
-			fmt.Printf("   [Error] Failed to delete %s: %v\n", fileName, err)
-		}
-	}
-
-	fmt.Println("Pre-delete actions completed. Proceeding to delete remote config.")
-	return true, nil
-}
-
-// 2. 삭제 후 실행 (Post-Hook)
-func ReuploadMigratedFiles(remoteName string) error {
-	if len(filesToReupload) == 0 {
-		return nil
-	}
-
-	fmt.Printf("\n[Post-Action] Re-uploading %d migrated files...\n", len(filesToReupload))
-
-	lb := ResourceBased
-
-	for _, f := range filesToReupload {
-		err := Dis_Upload([]string{f}, UploadTargets{UseConfig: true}, false, lb)
-		if err != nil {
-			return fmt.Errorf("failed to re-upload files: %w", err)
-		}
-	}
-
-	fmt.Println("All migrated files have been re-uploaded successfully.")
-
-	for _, fullPath := range filesToReupload {
-		err := os.Remove(fullPath)
-		if err != nil {
-			fmt.Printf("Warning: Failed to delete temp file %s: %v\n", fullPath, err)
-		}
-	}
-
-	if len(filesToReupload) > 0 {
-		// 파일 경로: /var/.../unic_migration/file.jpg -> 폴더 경로: /var/.../unic_migration
-		dirPath := filepath.Dir(filesToReupload[0])
-
-		// 폴더 삭제 시도 (파일을 다 지웠으니 비어있어야 함)
-		err := os.Remove(dirPath)
-		if err == nil {
-			fmt.Printf("Removed temporary directory: %s\n", dirPath)
-		} else {
-			// 만약 시스템 파일(.DS_Store 등)이 남아있어 안 지워질 수도 있음 -> RemoveAll로 강제 삭제도 가능
-			// os.RemoveAll(dirPath) // 강제 삭제를 원하면 이걸 쓰세요
-			fmt.Printf("Warning: Could not remove temp dir (might not be empty): %s\n", dirPath)
-		}
-	}
-
-	// 대기열 초기화
-	filesToReupload = []string{}
-	return nil
-}
-
 // Updating file flag to true.
 // this function is used when downloading or deleting a file.
-func UpdateFileFlag(originalFileName string, state string) error {
+func UpdateFileFlag(backendRemote string, state string) error {
 	jsonFileMutex.Lock()
 	defer jsonFileMutex.Unlock()
 
@@ -430,14 +275,17 @@ func UpdateFileFlag(originalFileName string, state string) error {
 		return fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	fileInfo, exists := filesMap[originalFileName]
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	fileInfo, exists := filesMap[backendRemoteHashString]
 	if !exists {
-		return fmt.Errorf("file '%s' not found\n", originalFileName)
+		return fmt.Errorf("file '%s' not found\n", backendRemote)
 	}
 
 	fileInfo.Flag = true
 	fileInfo.State = state
-	filesMap[originalFileName] = fileInfo
+	filesMap[backendRemoteHashString] = fileInfo
 
 	if err := writeJsonFile(getJsonFilePath(), filesMap); err != nil {
 		return fmt.Errorf("failed to write updated JSON: %v", err)
@@ -447,7 +295,7 @@ func UpdateFileFlag(originalFileName string, state string) error {
 }
 
 // updating distributedfile check flag after uploading, downloading or removing
-func updateDistributedFile(originalFileName, distributedFileName string, updateFunc func(*DistributedFile) error) error {
+func updateDistributedFile(backendRemote, distributedFileName string, updateFunc func(*DistributedFile) error) error {
 	jsonFileMutex.Lock()
 	defer jsonFileMutex.Unlock()
 
@@ -455,15 +303,18 @@ func updateDistributedFile(originalFileName, distributedFileName string, updateF
 	if err != nil {
 		return fmt.Errorf("failed to read JSON file: %v", err)
 	}
-
-	fileInfo, exists := filesMap[originalFileName]
+	
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	fileInfo, exists := filesMap[backendRemoteHashString]
 	if !exists {
-		return fmt.Errorf("file '%s' not found", originalFileName)
+		return fmt.Errorf("file '%s' not found", backendRemote)
 	}
 
 	dFile, exists := fileInfo.DistributedFileInfos[distributedFileName]
 	if !exists {
-		return fmt.Errorf("distributed file '%s' not found for original file '%s'", distributedFileName, originalFileName)
+		return fmt.Errorf("distributed file '%s' not found for original file '%s'", distributedFileName, backendRemote)
 	}
 
 	// Apply the update function
@@ -472,7 +323,7 @@ func updateDistributedFile(originalFileName, distributedFileName string, updateF
 	}
 
 	fileInfo.DistributedFileInfos[distributedFileName] = dFile
-	filesMap[originalFileName] = fileInfo
+	filesMap[backendRemoteHashString] = fileInfo
 
 	err = writeJsonFile(getJsonFilePath(), filesMap)
 	if err != nil {
@@ -483,15 +334,15 @@ func updateDistributedFile(originalFileName, distributedFileName string, updateF
 	return nil
 }
 
-func UpdateDistributedFile_CheckFlag(originalFileName, distributedFileName string, newCheck bool) error {
-	return updateDistributedFile(originalFileName, distributedFileName, func(dFile *DistributedFile) error {
+func UpdateDistributedFile_CheckFlag(backendRemote, distributedFileName string, newCheck bool) error {
+	return updateDistributedFile(backendRemote, distributedFileName, func(dFile *DistributedFile) error {
 		dFile.Check = newCheck
 		return nil
 	})
 }
 
-func UpdateDistributedFile_CheckFlagAndRemote(originalFileName, distributedFileName string, newCheck bool, remote Remote) error {
-	return updateDistributedFile(originalFileName, distributedFileName, func(dFile *DistributedFile) error {
+func UpdateDistributedFile_CheckFlagAndRemote(backendRemote, distributedFileName string, newCheck bool, remote Remote) error {
+	return updateDistributedFile(backendRemote, distributedFileName, func(dFile *DistributedFile) error {
 		dFile.Check = newCheck
 		dFile.Remote = remote
 		return nil
@@ -499,7 +350,7 @@ func UpdateDistributedFile_CheckFlagAndRemote(originalFileName, distributedFileN
 }
 
 // resetting file check flag after finishing operation
-func ResetCheckFlag(originalFileName string) error {
+func ResetCheckFlag(backendRemote string) error {
 	jsonFileMutex.Lock()
 	defer jsonFileMutex.Unlock()
 
@@ -508,9 +359,12 @@ func ResetCheckFlag(originalFileName string) error {
 		return fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	fileInfo, exists := filesMap[originalFileName]
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	fileInfo, exists := filesMap[backendRemoteHashString]
 	if !exists {
-		return fmt.Errorf("failed to reset flag: original file '%s' not found", originalFileName)
+		return fmt.Errorf("failed to reset flag: backendRemote'%s' not found", backendRemote)
 	}
 
 	fileInfo.Flag = false
@@ -520,7 +374,7 @@ func ResetCheckFlag(originalFileName string) error {
 		fileInfo.DistributedFileInfos[key] = dFile
 	}
 
-	filesMap[originalFileName] = fileInfo
+	filesMap[backendRemoteHashString] = fileInfo
 
 	if err := writeJsonFile(getJsonFilePath(), filesMap); err != nil {
 		return fmt.Errorf("failed to write updated JSON: %v", err)
@@ -562,15 +416,18 @@ func GetOriginalFileNameList(originalFileName string, hashedFileNameList []strin
 }
 
 // remove하다 멈췄을 때 어떤 파일을 마저 지워야하는지 알려주는 함수
-func GetUncompletedFileInfo(originalFileName string) ([]DistributedFile, error) {
+func GetUncompletedFileInfo(backendRemote string) ([]DistributedFile, error) {
 	filesMap, err := readJsonFile()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	fileInfo, exists := filesMap[originalFileName]
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	fileInfo, exists := filesMap[backendRemoteHashString]
 	if !exists {
-		return nil, fmt.Errorf("original file '%s' not found", originalFileName)
+		return nil, fmt.Errorf("original file '%s' not found", backendRemote)
 	}
 
 	var uncompleted []DistributedFile

@@ -264,6 +264,8 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (entry fs.Object, err
 	return f.newObject(ctx, remote, nil)
 }
 
+// entrytable을 읽는 코드가 이거 말고도 있음
+// 나중에 entrytable 찾는 코드를 method로 만들어서 재사용성을 높이는 방안 생각
 func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
@@ -468,6 +470,7 @@ func (f *Fs) getUpstreamRemotes() []config.Remote {
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
 	fs.Debugf(f, "----------Put method Start--------------")
+	fmt.Printf("dis_upload isDuplicate\n")
 	// 1. Create a temporary directory
 	fs.Debugf(f, "----------Create a temporary directory start--------------")
 	tempDir, err := os.MkdirTemp("", "unic_upload")
@@ -480,6 +483,8 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	// 2. Create the file with the correct name
 	fs.Debugf(f, "----------Create a temporary file start--------------")
 	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
+	fs.Debugf(f, "src.Remote(): %s", src.Remote())
+	fs.Debugf(f, "tempFilePath: %s", tempFilePath)
 	tempFile, err := os.Create(tempFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
@@ -504,7 +509,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
 	fs.Debugf(f, "----------dis_upload start--------------")
 	fs.Debugf(f, "tempFilePath: %s, remotes: %s", tempFilePath, f.getUpstreamRemotes())
-	err = dis_operations.Dis_Upload([]string{tempFilePath}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
+	err = dis_operations.Dis_Upload([]string{tempFilePath, src.Remote()}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
 		return nil, fmt.Errorf("Dis_Upload failed: %w", err)
 	}
@@ -513,10 +518,10 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	// 5. update entrytable.jsonl
 	fs.Debugf(f, "----------Update entrytable.jsonl start--------------")
 	remotePath := src.Remote()
-	if !strings.HasPrefix(remotePath, "/") {
-		remotePath = "/" + remotePath
-	}
-
+	//if !strings.HasPrefix(remotePath, "/") {
+	//	remotePath = "/" + remotePath
+	//}
+	
 	fileName := filepath.Base(remotePath)
 
 	nextID, err := f.getNextID()
@@ -661,7 +666,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	// targetName은 파일명만 추출해서 사용된다고 가정 (filepath.Base)
 	// unic의 remote 경로 전체가 필요한지, 파일명만 필요한지는 unic의 설계에 따름
 	// 현재 Dis_Download는 파일명을 키로 사용함.
-	targetName := o.remote
+	targetName := "/" + o.remote
 
 	// Debug
 	fs.Debugf(o, "UNIC Open 호출됨: targetName=%s, tempDir=%s", targetName, tempDir)
@@ -675,7 +680,8 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	// 3. 실제 생성된 파일 경로 찾기
 	// Dis_Download가 tempDir 안에 readme.txt (혹은 .fcef 확장자 등)로 저장할 것이므로
 	// 실제 파일의 위치를 특정해야 합니다.
-	downloadedFilePath := filepath.Join(tempDir, targetName)
+	targetRealName := filepath.Base(targetName)
+	downloadedFilePath := filepath.Join(tempDir, targetRealName)
 	f, err := os.Open(downloadedFilePath)
 	if err != nil {
 		os.RemoveAll(tempDir)
@@ -695,7 +701,20 @@ type tempFileCloser struct {
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
 	return nil
 }
-func (o *Object) Remove(ctx context.Context) error { return nil }
+
+func (o *Object) Remove(ctx context.Context) error {
+	fs.Debugf(o, "----------Remove method start----------")
+	
+	// dis_rm 수행
+	fs.Debugf(o, "----------dis_operations.Dis_rm start----------")
+	err := dis_operations.Dis_rm([]string{o.remote}, false)
+	if err != nil {
+		return err
+	}
+	fs.Debugf(o, "----------dis_operations.Dis_rm end----------")
+	
+	return nil
+}
 
 func multithread(num int, fn func(int)) {
 	var wg sync.WaitGroup

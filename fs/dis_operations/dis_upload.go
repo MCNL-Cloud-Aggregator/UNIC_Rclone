@@ -46,6 +46,8 @@ var copyCommandDefinition = &cobra.Command{
 
 func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer LoadBalancerType) error {
 	absolutePath, err := dis_init(args[0])
+	//backendRemote := "/" + args[1]
+	backendRemote := args[1]
 
 	if err != nil {
 		return err
@@ -75,7 +77,7 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 		// Uncomment this to allow duplicate check
 		// Currently commented bc gui not supporting this behavior
 
-		isDuplicate, err := DoesFileStructExist(originalFileName)
+		isDuplicate, err := DoesFileStructExist(backendRemote)
 		if err != nil {
 			return err
 		}
@@ -95,7 +97,7 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 			}
 		}
 
-		hashedNamesMap, distributedFileArray, err = prepareUpload(absolutePath, target)
+		hashedNamesMap, distributedFileArray, err = prepareUpload(absolutePath, backendRemote, target)
 		if err != nil {
 			return err
 		}
@@ -103,7 +105,7 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 
 	start := time.Now()
 
-	if err := startUploadFileGoroutine_Worker(originalFileName, hashedNamesMap, distributedFileArray, loadBalancer, 32); err != nil {
+	if err := startUploadFileGoroutine_Worker(backendRemote, hashedNamesMap, distributedFileArray, loadBalancer, 32); err != nil {
 		return err
 	}
 
@@ -118,7 +120,7 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 	fmt.Printf("Time taken for copy cmd: %s, Throughput: %.2f MB/s, Current Time: %s\n",
 		elapsed, throughput, currentTime)
 
-	if err := ResetCheckFlag(originalFileName); err != nil {
+	if err := ResetCheckFlag(backendRemote); err != nil {
 		return err
 	}
 
@@ -142,8 +144,8 @@ func createHashNames(distributedFileArray []DistributedFile) (hashNameMap map[st
 	return hashNameMap, errs
 }
 
-func prepareUpload(absolutePath string, target UploadTargets) (hashNameMap map[string]string, distributedFileInfos []DistributedFile, err error) {
-	dis_names, checksums, shardSize, padding, shard, parity := reedsolomon.DoEncode(absolutePath, tryGetPassword())
+func prepareUpload(absolutePath string, backendRemote string, target UploadTargets) (hashNameMap map[string]string, distributedFileInfos []DistributedFile, err error) {
+	dis_names, checksums, shardSize, padding, shard, parity := reedsolomon.DoEncode(absolutePath, backendRemote, tryGetPassword())
 	fmt.Println("Shard:", shard)
 	fmt.Println("Parity:", parity)
 	//remotes := config.GetRemotes()
@@ -178,7 +180,7 @@ func prepareUpload(absolutePath string, target UploadTargets) (hashNameMap map[s
 		return nil, nil, fmt.Errorf("errors occurred during hashing: %v", errs)
 	}
 
-	err = MakeDataMap(absolutePath, distributedFileInfos, shardSize, padding, shard, parity)
+	err = MakeDataMap(absolutePath, backendRemote, distributedFileInfos, shardSize, padding, shard, parity)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -186,7 +188,7 @@ func prepareUpload(absolutePath string, target UploadTargets) (hashNameMap map[s
 	return hashNameMap, distributedFileInfos, nil
 }
 
-func uploadFile(source, dest string, mu *sync.Mutex, totalThroughput *float64, fileCount *int, errs *[]error, originalFileName string, shardInfo DistributedFile, hashedFileNameMap map[string]string) error {
+func uploadFile(source, dest string, mu *sync.Mutex, totalThroughput *float64, fileCount *int, errs *[]error, backendRemote string, shardInfo DistributedFile, hashedFileNameMap map[string]string) error {
 	// Get file info
 	fileInfo, err := os.Stat(source)
 	if err != nil {
@@ -219,7 +221,7 @@ func uploadFile(source, dest string, mu *sync.Mutex, totalThroughput *float64, f
 	mu.Unlock()
 
 	// Update remote info
-	err = updateRemoteInfo_Up(originalFileName, shardInfo, throughputKbps, mu)
+	err = updateRemoteInfo_Up(backendRemote, shardInfo, throughputKbps, mu)
 	if err != nil {
 		return err
 	}
@@ -232,9 +234,9 @@ func uploadFile(source, dest string, mu *sync.Mutex, totalThroughput *float64, f
 	return nil
 }
 
-func updateRemoteInfo_Up(originalFileName string, shardInfo DistributedFile, throughputKbps float64, mu *sync.Mutex) error {
+func updateRemoteInfo_Up(backendRemote string, shardInfo DistributedFile, throughputKbps float64, mu *sync.Mutex) error {
 	mu.Lock()
-	err := UpdateDistributedFile_CheckFlagAndRemote(originalFileName, shardInfo.DistributedFile, true, shardInfo.Remote)
+	err := UpdateDistributedFile_CheckFlagAndRemote(backendRemote, shardInfo.DistributedFile, true, shardInfo.Remote)
 	if err != nil {
 		mu.Unlock()
 		return fmt.Errorf("UpdateDistributedFileCheckFlag error: %v", err)
@@ -249,7 +251,7 @@ func updateRemoteInfo_Up(originalFileName string, shardInfo DistributedFile, thr
 	return nil
 }
 
-func startUploadFileGoroutine_Worker(originalFileName string, hashedFileNameMap map[string]string, distributedFileArray []DistributedFile, loadBalancer LoadBalancerType, workerCount int) (err error) {
+func startUploadFileGoroutine_Worker(backendRemote string, hashedFileNameMap map[string]string, distributedFileArray []DistributedFile, loadBalancer LoadBalancerType, workerCount int) (err error) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var errs []error
@@ -277,7 +279,7 @@ func startUploadFileGoroutine_Worker(originalFileName string, hashedFileNameMap 
 			source := filepath.Join(dir, hashedFileNameMap[shardInfo.DistributedFile])
 
 			// Upload file and calculate throughput
-			err = uploadFile(source, dest, &mu, &totalThroughput, &fileCount, &errs, originalFileName, shardInfo, hashedFileNameMap)
+			err = uploadFile(source, dest, &mu, &totalThroughput, &fileCount, &errs, backendRemote, shardInfo, hashedFileNameMap)
 			if err != nil {
 				mu.Lock()
 				errs = append(errs, err)
@@ -315,7 +317,7 @@ func startUploadFileGoroutine_Worker(originalFileName string, hashedFileNameMap 
 	return nil
 }
 
-func startUploadFileGoroutine(originalFileName string, hashedFileNameMap map[string]string, distributedFileArray []DistributedFile, loadBalancer LoadBalancerType) (err error) {
+func startUploadFileGoroutine(backendRemote string, hashedFileNameMap map[string]string, distributedFileArray []DistributedFile, loadBalancer LoadBalancerType) (err error) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var errs []error
@@ -345,7 +347,7 @@ func startUploadFileGoroutine(originalFileName string, hashedFileNameMap map[str
 			source := filepath.Join(dir, hashedFileNameMap[shardInfo.DistributedFile])
 
 			// Upload file and calculate throughput
-			err = uploadFile(source, dest, &mu, &totalThroughput, &fileCount, &errs, originalFileName, shardInfo, hashedFileNameMap)
+			err = uploadFile(source, dest, &mu, &totalThroughput, &fileCount, &errs, backendRemote, shardInfo, hashedFileNameMap)
 			if err != nil {
 				mu.Lock()
 				errs = append(errs, err)

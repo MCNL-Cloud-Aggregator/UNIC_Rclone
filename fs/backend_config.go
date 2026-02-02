@@ -264,11 +264,7 @@ func ConfigChooseFixed(state string, name string, help string, items []OptionExa
 		},
 	}
 	if len(choose.Option.Examples) > 0 {
-		if name == "config_driveid" {
-			choose.Option.Default = choose.Option.Examples[1].Value
-		} else {
-			choose.Option.Default = choose.Option.Examples[0].Value
-		}
+		choose.Option.Default = choose.Option.Examples[0].Value
 	}
 	return choose, nil
 }

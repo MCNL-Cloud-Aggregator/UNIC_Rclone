@@ -108,7 +108,8 @@ func calculateShardsNum(filename string) {
 	}
 }
 
-func DoEncode(fname string, password string) ([]string, []string, int64, int64, int, int) {
+func DoEncode(fname string, backendRemote string, password string) ([]string, []string, int64, int64, int, int) {
+	fmt.Printf("fname: %s\n", fname)
 	var paths []string
 	var checksums []string
 	var padding int64
@@ -124,6 +125,7 @@ func DoEncode(fname string, password string) ([]string, []string, int64, int64, 
 
 	// Encrypt the file
 	encFile, err := app.Encrypt(fname, v2.Passphrase(password))
+	fmt.Printf("encFile name: %s\n", encFile)
 	checkErr(err)
 
 	if (*dataShards + *parShards) > 256 {
@@ -145,12 +147,16 @@ func DoEncode(fname string, password string) ([]string, []string, int64, int64, 
 	shards := *dataShards + *parShards
 	out := make([]*os.File, shards)
 
-	// Create the resulting files.
-	_, file := filepath.Split(encFile)
+	//// Create the resulting files.
+	//_, file := filepath.Split(encFile)
 
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	backendRemoteHashString = backendRemoteHashString + fileCryptExtension
+	
 	// Get path and checksum of all shards
 	for i := range out {
-		outfn := fmt.Sprintf("%s.%d", file, i)
+		outfn := fmt.Sprintf("%s.%d", backendRemoteHashString, i)
 		fmt.Println("Creating", outfn)
 		out[i], err = os.Create(filepath.Join(path, outfn))
 		checkErr(err)
@@ -269,9 +275,13 @@ func trimPadding(f *os.File, trimSize int64) {
 	}
 }
 
-func DoDecode(fname string, outfn string, padding int64, confChecksums map[string]string, downloadshard int, downloadparity int, password string) error {
+func DoDecode(backendRemote string, outfn string, padding int64, confChecksums map[string]string, downloadshard int, downloadparity int, password string) error {
 	// ConfChecksums is the checksums from configfile
-
+	
+	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	
+	fname := backendRemoteHashString
 	fname = fmt.Sprintf("%s%s", fname, fileCryptExtension)
 	shardDir, _ := GetShardDir()
 	fmt.Printf("outfn: %s, fname: %s\n", outfn, fname)
@@ -362,7 +372,9 @@ func DoDecode(fname string, outfn string, padding int64, confChecksums map[strin
 		}
 
 	}
+	fmt.Println("outfn: ", outfn)
 	outfn = filepath.Join(outfn, fname)
+	fmt.Println("outfn: ", outfn)
 
 	fmt.Println("Writing data to", outfn)
 	f, err := os.Create(outfn)
@@ -390,6 +402,16 @@ func DoDecode(fname string, outfn string, padding int64, confChecksums map[strin
 	}
 	f.Close()
 
+	// Renaming
+	originalFileName := filepath.Base(backendRemote)
+	finalRestoredPath := filepath.Join(filepath.Dir(originFile), originalFileName)
+    
+    fmt.Printf("Renaming: %s -> %s\n", originFile, finalRestoredPath)
+    err = os.Rename(originFile, finalRestoredPath)
+    if err != nil {
+        return fmt.Errorf("failed to rename to original name: %v", err)
+    }
+	
 	// Remove the Decodeded file
 	err = os.Remove(outfn)
 	if err != nil {
