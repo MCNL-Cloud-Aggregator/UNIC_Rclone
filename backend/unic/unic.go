@@ -521,7 +521,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	//if !strings.HasPrefix(remotePath, "/") {
 	//	remotePath = "/" + remotePath
 	//}
-	
+
 	fileName := filepath.Base(remotePath)
 
 	nextID, err := f.getNextID()
@@ -666,7 +666,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	// targetName은 파일명만 추출해서 사용된다고 가정 (filepath.Base)
 	// unic의 remote 경로 전체가 필요한지, 파일명만 필요한지는 unic의 설계에 따름
 	// 현재 Dis_Download는 파일명을 키로 사용함.
-	targetName := "/" + o.remote
+	targetName := o.remote
 
 	// Debug
 	fs.Debugf(o, "UNIC Open 호출됨: targetName=%s, tempDir=%s", targetName, tempDir)
@@ -704,7 +704,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 
 func (o *Object) Remove(ctx context.Context) error {
 	fs.Debugf(o, "----------Remove method start----------")
-	
+
 	// dis_rm 수행
 	fs.Debugf(o, "----------dis_operations.Dis_rm start----------")
 	err := dis_operations.Dis_rm([]string{o.remote}, false)
@@ -712,7 +712,7 @@ func (o *Object) Remove(ctx context.Context) error {
 		return err
 	}
 	fs.Debugf(o, "----------dis_operations.Dis_rm end----------")
-	
+
 	return nil
 }
 
