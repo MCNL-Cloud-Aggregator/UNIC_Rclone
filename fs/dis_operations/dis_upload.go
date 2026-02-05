@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
@@ -102,6 +103,42 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 			return err
 		}
 	}
+
+	// server가 fileID를 발급해서 datamap.json을 완성한 이후 다시 로컬로 보내주는 것 대기
+	fmt.Println("server가 datamap.json을 수정해주기를 대기중...")
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		fmt.Printf("%s\n", err)
+		return err
+	}
+	defer watcher.Close()
+
+	// 파일이 감지할 파일 지정
+	datamapPath := filepath.Join(GetRcloneDirPath(), "/data/datamap.json")
+	watcher.Add(datamapPath)
+
+	// 파일 변화 감지
+	select {
+	case event, ok := <-watcher.Events:
+		if !ok {
+			fmt.Println("watcher channel close")
+			return err
+		}
+
+		fmt.Printf("발생한 이벤트: %s\n", event.String())
+
+		if event.Has(fsnotify.Write) {
+			fmt.Printf("write event 발생 %s\n", event.Name)
+		}
+
+	case err, ok := <-watcher.Errors:
+		if !ok {
+			fmt.Println("watcher channel close")
+			return err
+		}
+		fmt.Printf("%s\n", err)
+	}
+	fmt.Println("server 작업 완료...")
 
 	start := time.Now()
 
@@ -397,7 +434,7 @@ func MakeDistributionDir(remotes []config.Remote) (err error) {
 	return nil
 }
 
-// copyCommand.Execute() method를 사용하면 프로그램 전체를 재시작 하는데 
+// copyCommand.Execute() method를 사용하면 프로그램 전체를 재시작 하는데
 // 이 때 CLI 환경을 통해 OS가 넘겨준 명령어를 재실행하게 됨.
 // UNIC의 경우 ./rclone mount ... 명령을 재실행하게 되는데
 // 이 때 mount가 이미 되어있는 경로에 대해 mount를 다시 한번 실행하므로 오류 발생 및 마운트 해제
@@ -413,7 +450,7 @@ func remoteCallCopy(args []string) (err error) {
 	//if err != nil {
 	//	return fmt.Errorf("error executing copyCommand: %w", err)
 	//}
-	
+
 	fsrc, srcFileName, fdst := cmd.NewFsSrcFileDst(args)
 	if srcFileName == "" {
 		return rsync.CopyDir(context.Background(), fdst, fsrc, createEmptySrcDirs)
@@ -429,7 +466,7 @@ func logThroughput(totalThroughput float64, fileCount int) {
 	fmt.Println("Current Time:", time.Now().Format("2006-01-02 15:04:05"))
 }
 
-// copyCommand.Execute() method를 사용하면 프로그램 전체를 재시작 하는데 
+// copyCommand.Execute() method를 사용하면 프로그램 전체를 재시작 하는데
 // 이 때 CLI 환경을 통해 OS가 넘겨준 명령어를 재실행하게 됨.
 // UNIC의 경우 ./rclone mount ... 명령을 재실행하게 되는데
 // 이 때 mount가 이미 되어있는 경로에 대해 mount를 다시 한번 실행하므로 오류 발생 및 마운트 해제
@@ -445,12 +482,12 @@ func remoteCallMkdir(args []string) (err error) {
 	//if err != nil {
 	//	return fmt.Errorf("error executing mkdirCommand: %w", err)
 	//}
-	
+
 	fdst := cmd.NewFsDir(args)
 	if !fdst.Features().CanHaveEmptyDirectories && strings.Contains(fdst.Root(), "/") {
 		fs.Logf(fdst, "Warning: running mkdir on a remote which can't have empty directories does nothing")
 	}
-	
+
 	return operations.Mkdir(context.Background(), fdst, "")
 }
 

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -473,7 +472,6 @@ func (f *Fs) getUpstreamRemotes() []config.Remote {
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
 	fs.Debugf(f, "----------Put method Start--------------")
-	fmt.Printf("dis_upload isDuplicate\n")
 	// 1. Create a temporary directory
 	fs.Debugf(f, "----------Create a temporary directory start--------------")
 	tempDir, err := os.MkdirTemp("", "unic_upload")
@@ -508,51 +506,53 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}
 	fs.Debugf(f, "----------Copy content to temp file end--------------")
 
-	// 4. Get ID from server
-	resp, err := http.Get("https://balneologic-pseudomiraculous-leonidas.ngrok-free.dev/api/v1")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+	// // 4. Get ID from server
 
-	// rclone.conf에서 sessionID와 ssrfToken 가져오기
-	rclone_conf_file, _ := os.Open("config.unic")
-	defer rclone_conf_file.Close()
+	// // rclone.conf에서 sessionID와 ssrfToken 가져오기
+	// rclone_conf_file, _ := os.Open("config.unic")
+	// defer rclone_conf_file.Close()
 
-	scanner := bufio.NewScanner(rclone_conf_file)
-	var sessionID, ssrfToken string
+	// scanner := bufio.NewScanner(rclone_conf_file)
+	// var sessionID, ssrfToken string
 
-	isUnic := false
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	// isUnic := false
+	// for scanner.Scan() {
+	// 	line := strings.TrimSpace(scanner.Text())
 
-		if !isUnic && strings.HasPrefix(line, "[unic]") {
-			isUnic = true
-		}
+	// 	if !isUnic && strings.HasPrefix(line, "[unic]") {
+	// 		isUnic = true
+	// 	}
 
-		if isUnic {
-			// 키워드 포함 여부 확인
-			if strings.HasPrefix(line, "sessionID") {
-				sessionID = extractValue(line)
-			} else if strings.HasPrefix(line, "ssrfToken") {
-				ssrfToken = extractValue(line)
-			}
-		}
-	}
+	// 	if isUnic {
+	// 		// 키워드 포함 여부 확인
+	// 		if strings.HasPrefix(line, "sessionID") {
+	// 			sessionID = extractValue(line)
+	// 		} else if strings.HasPrefix(line, "ssrfToken") {
+	// 			ssrfToken = extractValue(line)
+	// 		}
+	// 	}
+	// }
 
-	fmt.Println("Extracted SessionID:", sessionID)
-	fmt.Println("Extracted SSRF Token:", ssrfToken)
+	// fmt.Println("Extracted SessionID:", sessionID)
+	// fmt.Println("Extracted SSRF Token:", ssrfToken)
 
-	// request 객체 생성
-	req, err := http.NewRequest("GET", "https://balneologic-pseudomiraculous-leonidas.ngrok-free.dev/api/v1", nil)
-	if err != nil {
-		return nil, err
-	}
+	// // request 객체 생성
+	// req, err := http.NewRequest("GET", "https://balneologic-pseudomiraculous-leonidas.ngrok-free.dev/api/v1", nil)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
-	req.Header.Set("X-XSRF-TOKEN", ssrfToken)
-	req.Header.Set("JSESSIONID", sessionID)
+	// req.Header.Set("X-XSRF-TOKEN", ssrfToken)
+	// req.Header.Set("JSESSIONID", sessionID)
 
-	// HTTP request 전송
+	// // HTTP request 전송
+	// resp, err := http.Get("https://jsonplaceholder.typicode.com/posts/1")
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// defer resp.Body.Close()
+
+	// // HTTP response에서 쿠키 파싱해서
 
 	// 5. Call Dis_Upload
 	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
