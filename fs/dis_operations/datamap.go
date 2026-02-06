@@ -159,13 +159,15 @@ func generateBackendHash(backendRemote string) string {
 	return backendRemoteHashString
 }
 
-func RemoveFileFromMetadata(fileName string) error {
+func RemoveFileFromMetadata(backendRemote string) error {
 	filesMap, err := readJsonFile()
 	if err != nil {
 		return err
 	}
 
-	delete(filesMap, fileName)
+	backendRemoteHashString := generateBackendHash(backendRemote)
+
+	delete(filesMap, backendRemoteHashString)
 
 	return writeJsonFile(getJsonFilePath(), filesMap)
 }
