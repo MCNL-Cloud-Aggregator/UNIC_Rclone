@@ -397,7 +397,7 @@ func MakeDistributionDir(remotes []config.Remote) (err error) {
 	return nil
 }
 
-// copyCommand.Execute() method를 사용하면 프로그램 전체를 재시작 하는데 
+// copyCommand.Execute() method를 사용하면 프로그램 전체를 재시작 하는데
 // 이 때 CLI 환경을 통해 OS가 넘겨준 명령어를 재실행하게 됨.
 // UNIC의 경우 ./rclone mount ... 명령을 재실행하게 되는데
 // 이 때 mount가 이미 되어있는 경로에 대해 mount를 다시 한번 실행하므로 오류 발생 및 마운트 해제
@@ -413,7 +413,7 @@ func remoteCallCopy(args []string) (err error) {
 	//if err != nil {
 	//	return fmt.Errorf("error executing copyCommand: %w", err)
 	//}
-	
+
 	fsrc, srcFileName, fdst := cmd.NewFsSrcFileDst(args)
 	if srcFileName == "" {
 		return rsync.CopyDir(context.Background(), fdst, fsrc, createEmptySrcDirs)
@@ -429,7 +429,7 @@ func logThroughput(totalThroughput float64, fileCount int) {
 	fmt.Println("Current Time:", time.Now().Format("2006-01-02 15:04:05"))
 }
 
-// copyCommand.Execute() method를 사용하면 프로그램 전체를 재시작 하는데 
+// copyCommand.Execute() method를 사용하면 프로그램 전체를 재시작 하는데
 // 이 때 CLI 환경을 통해 OS가 넘겨준 명령어를 재실행하게 됨.
 // UNIC의 경우 ./rclone mount ... 명령을 재실행하게 되는데
 // 이 때 mount가 이미 되어있는 경로에 대해 mount를 다시 한번 실행하므로 오류 발생 및 마운트 해제
@@ -445,12 +445,12 @@ func remoteCallMkdir(args []string) (err error) {
 	//if err != nil {
 	//	return fmt.Errorf("error executing mkdirCommand: %w", err)
 	//}
-	
+
 	fdst := cmd.NewFsDir(args)
 	if !fdst.Features().CanHaveEmptyDirectories && strings.Contains(fdst.Root(), "/") {
 		fs.Logf(fdst, "Warning: running mkdir on a remote which can't have empty directories does nothing")
 	}
-	
+
 	return operations.Mkdir(context.Background(), fdst, "")
 }
 
