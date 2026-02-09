@@ -2,6 +2,8 @@ package unic
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -557,7 +559,11 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
 	fs.Debugf(f, "----------dis_upload start--------------")
 	fs.Debugf(f, "tempFilePath: %s, remotes: %s", tempFilePath, f.getUpstreamRemotes())
-	err = dis_operations.Dis_Upload([]string{tempFilePath, src.Remote()}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
+
+	remotePath := src.Remote()
+	backendRemoteHash := sha256.Sum256([]byte(remotePath))
+	fileID := hex.EncodeToString(backendRemoteHash[:])
+	err = dis_operations.Dis_Upload([]string{tempFilePath, remotePath, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
 		return nil, fmt.Errorf("Dis_Upload failed: %w", err)
 	}
@@ -762,7 +768,8 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
 	fs.Debugf(o, "----------dis_upload start--------------")
 	fs.Debugf(o, "tempFilePath: %s, remotes: %s", tempFilePath, o.fs.getUpstreamRemotes())
-	err = dis_operations.Dis_Upload([]string{tempFilePath, src.Remote()}, dis_operations.UploadTargets{Remotes: o.fs.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
+	fileId := o.id
+	err = dis_operations.Dis_Upload([]string{tempFilePath, fileId, o.remote()}, dis_operations.UploadTargets{Remotes: o.fs.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
 		return err
 	}
@@ -777,7 +784,8 @@ func (o *Object) Remove(ctx context.Context) error {
 
 	// dis_rm 수행
 	fs.Debugf(o, "----------dis_operations.Dis_rm start----------")
-	err := dis_operations.Dis_rm([]string{o.remote}, false)
+	fileId := o.id
+	err := dis_operations.Dis_rm([]string{fileId}, false)
 	if err != nil {
 		return err
 	}
