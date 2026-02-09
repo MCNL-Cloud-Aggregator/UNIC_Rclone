@@ -99,7 +99,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 	fmt.Printf("---DoDecode start---\n")
 	fmt.Printf("Dis_Download backendRemote2: %s\n", fileid)
 	//originalFileName := filepath.Base(backendRemote)
-	err = reedsolomon.DoDecode(fileid, absolutePath, fileInfo.Padding, checksums, fileInfo.Shard, fileInfo.Parity, tryGetPassword())
+	err = reedsolomon.DoDecode(fileid, args[2], absolutePath, fileInfo.Padding, checksums, fileInfo.Shard, fileInfo.Parity, tryGetPassword())
 	if err != nil {
 		result := ShowDescription_RemoveFile(fileid, err)
 		if result {

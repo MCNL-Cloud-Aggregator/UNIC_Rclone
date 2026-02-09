@@ -680,11 +680,11 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	// unic의 remote 경로 전체가 필요한지, 파일명만 필요한지는 unic의 설계에 따름
 	// 현재 Dis_Download는 파일명을 키로 사용함.
 	fileId := o.id
-
+	remotePath := o.remote
 	// Debug
 	fs.Debugf(o, "UNIC Open 호출됨: targetName=%s, tempDir=%s", fileId, downloadDir)
 
-	err = dis_operations.Dis_Download([]string{fileId, downloadDir}, false)
+	err = dis_operations.Dis_Download([]string{fileId, downloadDir, remotePath}, false)
 	if err != nil {
 		fs.Errorf(o, "Dis_Download 실패: targetName=%s, error=%v", fileId, err)
 		return nil, err

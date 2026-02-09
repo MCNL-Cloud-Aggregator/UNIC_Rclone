@@ -153,7 +153,7 @@ func DoEncode(fname string, backendRemote string, password string) ([]string, []
 	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
 	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
 	backendRemoteHashString = backendRemoteHashString + fileCryptExtension
-	
+
 	// Get path and checksum of all shards
 	for i := range out {
 		outfn := fmt.Sprintf("%s.%d", backendRemoteHashString, i)
@@ -275,13 +275,13 @@ func trimPadding(f *os.File, trimSize int64) {
 	}
 }
 
-func DoDecode(backendRemote string, outfn string, padding int64, confChecksums map[string]string, downloadshard int, downloadparity int, password string) error {
+func DoDecode(fileId string, backendRemote string, outfn string, padding int64, confChecksums map[string]string, downloadshard int, downloadparity int, password string) error {
 	// ConfChecksums is the checksums from configfile
-	
-	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
-	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
-	
-	fname := backendRemoteHashString
+
+	/*backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])*/
+
+	fname := fileId
 	fname = fmt.Sprintf("%s%s", fname, fileCryptExtension)
 	shardDir, _ := GetShardDir()
 	fmt.Printf("outfn: %s, fname: %s\n", outfn, fname)
@@ -405,13 +405,13 @@ func DoDecode(backendRemote string, outfn string, padding int64, confChecksums m
 	// Renaming
 	originalFileName := filepath.Base(backendRemote)
 	finalRestoredPath := filepath.Join(filepath.Dir(originFile), originalFileName)
-    
-    fmt.Printf("Renaming: %s -> %s\n", originFile, finalRestoredPath)
-    err = os.Rename(originFile, finalRestoredPath)
-    if err != nil {
-        return fmt.Errorf("failed to rename to original name: %v", err)
-    }
-	
+
+	fmt.Printf("Renaming: %s -> %s\n", originFile, finalRestoredPath)
+	err = os.Rename(originFile, finalRestoredPath)
+	if err != nil {
+		return fmt.Errorf("failed to rename to original name: %v", err)
+	}
+
 	// Remove the Decodeded file
 	err = os.Remove(outfn)
 	if err != nil {
