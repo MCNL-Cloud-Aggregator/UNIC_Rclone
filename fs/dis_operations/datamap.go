@@ -273,7 +273,7 @@ func CheckFlagAndState() (bool, string, string) {
 
 // Updating file flag to true.
 // this function is used when downloading or deleting a file.
-func UpdateFileFlag(backendRemote string, state string) error {
+func UpdateFileFlag(fileId string, state string) error {
 	jsonFileMutex.Lock()
 	defer jsonFileMutex.Unlock()
 
@@ -282,17 +282,17 @@ func UpdateFileFlag(backendRemote string, state string) error {
 		return fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
-	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	/*backendRemoteHash := sha256.Sum256([]byte(fileId))
+	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])*/
 
-	fileInfo, exists := filesMap[backendRemoteHashString]
+	fileInfo, exists := filesMap[fileId]
 	if !exists {
-		return fmt.Errorf("file '%s' not found\n", backendRemote)
+		return fmt.Errorf("file '%s' not found\n", fileId)
 	}
 
 	fileInfo.Flag = true
 	fileInfo.State = state
-	filesMap[backendRemoteHashString] = fileInfo
+	filesMap[fileId] = fileInfo
 
 	if err := writeJsonFile(getJsonFilePath(), filesMap); err != nil {
 		return fmt.Errorf("failed to write updated JSON: %v", err)
