@@ -26,11 +26,13 @@ import (
 // inodetable path
 // var entrytable_path = "/home/yrcho/.config/rclone/entrytable.jsonl"
 var entrytable_path string
+var rclone_path string
 
 // Register with Fs
 func init() {
 	homeDir, _ := os.UserHomeDir()
 	entrytable_path = filepath.Join(homeDir, ".config", "rclone", "entrytable.jsonl")
+	rclone_path = filepath.Join(homeDir, ".config", "rclone", "rclone.conf")
 	fs.Register(&fs.RegInfo{
 		Name:        "unic",
 		Description: "Unified Namespace of Integrated Cloudstorage",
@@ -470,7 +472,6 @@ func (f *Fs) getUpstreamRemotes() []config.Remote {
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
 	fs.Debugf(f, "----------Put method Start--------------")
-	fmt.Printf("dis_upload isDuplicate\n")
 	// 1. Create a temporary directory
 	fs.Debugf(f, "----------Create a temporary directory start--------------")
 	tempDir, err := os.MkdirTemp("", "unic_upload")
@@ -505,7 +506,55 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}
 	fs.Debugf(f, "----------Copy content to temp file end--------------")
 
-	// 4. Call Dis_Upload
+	// // 4. Get ID from server
+
+	// // rclone.conf에서 sessionID와 ssrfToken 가져오기
+	// rclone_conf_file, _ := os.Open("config.unic")
+	// defer rclone_conf_file.Close()
+
+	// scanner := bufio.NewScanner(rclone_conf_file)
+	// var sessionID, ssrfToken string
+
+	// isUnic := false
+	// for scanner.Scan() {
+	// 	line := strings.TrimSpace(scanner.Text())
+
+	// 	if !isUnic && strings.HasPrefix(line, "[unic]") {
+	// 		isUnic = true
+	// 	}
+
+	// 	if isUnic {
+	// 		// 키워드 포함 여부 확인
+	// 		if strings.HasPrefix(line, "sessionID") {
+	// 			sessionID = extractValue(line)
+	// 		} else if strings.HasPrefix(line, "ssrfToken") {
+	// 			ssrfToken = extractValue(line)
+	// 		}
+	// 	}
+	// }
+
+	// fmt.Println("Extracted SessionID:", sessionID)
+	// fmt.Println("Extracted SSRF Token:", ssrfToken)
+
+	// // request 객체 생성
+	// req, err := http.NewRequest("GET", "https://balneologic-pseudomiraculous-leonidas.ngrok-free.dev/api/v1", nil)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	// req.Header.Set("X-XSRF-TOKEN", ssrfToken)
+	// req.Header.Set("JSESSIONID", sessionID)
+
+	// // HTTP request 전송
+	// resp, err := http.Get("https://jsonplaceholder.typicode.com/posts/1")
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// defer resp.Body.Close()
+
+	// // HTTP response에서 쿠키 파싱해서
+
+	// 5. Call Dis_Upload
 	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
 	fs.Debugf(f, "----------dis_upload start--------------")
 	fs.Debugf(f, "tempFilePath: %s, remotes: %s", tempFilePath, f.getUpstreamRemotes())
@@ -515,7 +564,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}
 	fs.Debugf(f, "----------dis_upload end--------------")
 
-	// 5. update entrytable.jsonl
+	// 6. update entrytable.jsonl
 	fs.Debugf(f, "----------Update entrytable.jsonl start--------------")
 	remotePath := src.Remote()
 	//if !strings.HasPrefix(remotePath, "/") {
@@ -572,6 +621,17 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		size:    src.Size(),
 		modTime: src.ModTime(ctx),
 	}, nil
+}
+
+func extractValue(line string) string {
+	parts := strings.Split(line, "=")
+	if len(parts) < 2 {
+		return ""
+	}
+	val := strings.TrimSpace(parts[1]) // {"value"}
+	val = strings.TrimPrefix(val, "{\"")
+	val = strings.TrimSuffix(val, "\"}")
+	return val
 }
 
 // newNodeEntry에서 사용할 새로운 ID를 받아오는 method
@@ -699,6 +759,63 @@ type tempFileCloser struct {
 }
 
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
+	// dis_rm 수행하여 기존의 파일 삭제
+	fs.Debugf(o, "----------Update method start----------")
+
+	// dis_rm 수행
+	fs.Debugf(o, "----------dis_operations.Dis_rm start----------")
+	err := dis_operations.Dis_rm([]string{o.remote}, false)
+	if err != nil {
+		return err
+	}
+	fs.Debugf(o, "----------dis_operations.Dis_rm end----------")
+
+	// dis_upload 수행하여 새로운 파일 업로드
+	// 1. Create a temporary directory
+	fs.Debugf(o, "----------Create a temporary directory start--------------")
+	tempDir, err := os.MkdirTemp("", "unic_upload")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tempDir) // Clean up
+	fs.Debugf(o, "----------Create a temporary directory end--------------")
+
+	// 2. Create the file with the correct name
+	fs.Debugf(o, "----------Create a temporary file start--------------")
+	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
+	fs.Debugf(o, "src.Remote(): %s", src.Remote())
+	fs.Debugf(o, "tempFilePath: %s", tempFilePath)
+	tempFile, err := os.Create(tempFilePath)
+	if err != nil {
+		return err
+	}
+	fs.Debugf(o, "----------Create a temporary file end--------------")
+
+	// 3. Copy content
+	fs.Debugf(o, "----------Copy content to temp file start--------------")
+	_, err = io.Copy(tempFile, in)
+
+	tempFile.Sync()
+	closeErr := tempFile.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	fs.Debugf(o, "----------Copy content to temp file end--------------")
+
+	// 4. Call Dis_Upload
+	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
+	fs.Debugf(o, "----------dis_upload start--------------")
+	fs.Debugf(o, "tempFilePath: %s, remotes: %s", tempFilePath, o.fs.getUpstreamRemotes())
+	err = dis_operations.Dis_Upload([]string{tempFilePath, src.Remote()}, dis_operations.UploadTargets{Remotes: o.fs.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
+	if err != nil {
+		return err
+	}
+	fs.Debugf(o, "----------dis_upload end--------------")
+	fs.Debugf(o, "----------Update method end--------------")
+
 	return nil
 }
 

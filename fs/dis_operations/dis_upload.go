@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config"
@@ -102,6 +103,42 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 			return err
 		}
 	}
+
+	// server가 fileID를 발급해서 datamap.json을 완성한 이후 다시 로컬로 보내주는 것 대기
+	fmt.Println("server가 datamap.json을 수정해주기를 대기중...")
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		fmt.Printf("%s\n", err)
+		return err
+	}
+	defer watcher.Close()
+
+	// 파일이 감지할 파일 지정
+	datamapPath := filepath.Join(GetRcloneDirPath(), "/data/datamap.json")
+	watcher.Add(datamapPath)
+
+	// 파일 변화 감지
+	select {
+	case event, ok := <-watcher.Events:
+		if !ok {
+			fmt.Println("watcher channel close")
+			return err
+		}
+
+		fmt.Printf("발생한 이벤트: %s\n", event.String())
+
+		if event.Has(fsnotify.Write) {
+			fmt.Printf("write event 발생 %s\n", event.Name)
+		}
+
+	case err, ok := <-watcher.Errors:
+		if !ok {
+			fmt.Println("watcher channel close")
+			return err
+		}
+		fmt.Printf("%s\n", err)
+	}
+	fmt.Println("server 작업 완료...")
 
 	start := time.Now()
 
