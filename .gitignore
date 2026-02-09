@@ -3,3 +3,4 @@ rclone
 *.jpg
 entrytable.jsonl
 mp
+backend/unic/test/*
