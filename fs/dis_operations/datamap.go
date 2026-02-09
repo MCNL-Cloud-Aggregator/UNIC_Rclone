@@ -148,7 +148,7 @@ func MakeDataMap(originalFilePath string, backendRemote string, distributedFiles
 		return err
 	}
 
-	FilesMap["tempFileID"] = newFileInfo
+	FilesMap[backendRemoteHashString] = newFileInfo
 	return writeJsonFile(jsonFilePath, FilesMap)
 }
 
@@ -179,6 +179,10 @@ func GetFileInfoStruct(backendRemote string) (FileInfo, error) {
 	}
 
 	backendRemoteHashString := generateBackendHash(backendRemote)
+	if fileInfo, exists := filesMap[backendRemoteHashString]; exists {
+		fmt.Printf("FileName: %s, FilePath: %s\n", fileInfo.FileName, fileInfo.FilePath)
+		return fileInfo, nil
+	}
 
 	return FileInfo{}, fmt.Errorf("GetFileInfoStruct file name '%s' not found", backendRemote)
 }
@@ -189,7 +193,9 @@ func DoesFileStructExist(backendRemote string) (bool, error) {
 		return false, err
 	}
 
-	_, exists := filesMap[backendRemote]
+	backendRemoteHashString := generateBackendHash(backendRemote)
+
+	_, exists := filesMap[backendRemoteHashString]
 	return exists, nil
 }
 
