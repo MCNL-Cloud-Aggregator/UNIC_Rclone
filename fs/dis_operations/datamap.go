@@ -300,7 +300,7 @@ func UpdateFileFlag(fileId string, state string) error {
 }
 
 // updating distributedfile check flag after uploading, downloading or removing
-func updateDistributedFile(backendRemote, distributedFileName string, updateFunc func(*DistributedFile) error) error {
+func updateDistributedFile(fileId, distributedFileName string, updateFunc func(*DistributedFile) error) error {
 	jsonFileMutex.Lock()
 	defer jsonFileMutex.Unlock()
 
@@ -309,16 +309,14 @@ func updateDistributedFile(backendRemote, distributedFileName string, updateFunc
 		return fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	backendRemoteHashString := generateBackendHash(backendRemote)
-
-	fileInfo, exists := filesMap[backendRemoteHashString]
+	fileInfo, exists := filesMap[fileId]
 	if !exists {
-		return fmt.Errorf("file '%s' not found", backendRemote)
+		return fmt.Errorf("file '%s' not found", fileId)
 	}
 
 	dFile, exists := fileInfo.DistributedFileInfos[distributedFileName]
 	if !exists {
-		return fmt.Errorf("distributed file '%s' not found for original file '%s'", distributedFileName, backendRemote)
+		return fmt.Errorf("distributed file '%s' not found for original file '%s'", distributedFileName, fileId)
 	}
 
 	// Apply the update function
@@ -327,7 +325,7 @@ func updateDistributedFile(backendRemote, distributedFileName string, updateFunc
 	}
 
 	fileInfo.DistributedFileInfos[distributedFileName] = dFile
-	filesMap[backendRemoteHashString] = fileInfo
+	filesMap[fileId] = fileInfo
 
 	err = writeJsonFile(getJsonFilePath(), filesMap)
 	if err != nil {
@@ -338,8 +336,8 @@ func updateDistributedFile(backendRemote, distributedFileName string, updateFunc
 	return nil
 }
 
-func UpdateDistributedFile_CheckFlag(backendRemote, distributedFileName string, newCheck bool) error {
-	return updateDistributedFile(backendRemote, distributedFileName, func(dFile *DistributedFile) error {
+func UpdateDistributedFile_CheckFlag(fileId, distributedFileName string, newCheck bool) error {
+	return updateDistributedFile(fileId, distributedFileName, func(dFile *DistributedFile) error {
 		dFile.Check = newCheck
 		return nil
 	})

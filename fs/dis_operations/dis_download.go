@@ -36,7 +36,7 @@ var copyCommandDefinitionForDown = &cobra.Command{
 func Dis_Download(args []string, reSignal bool) (err error) {
 
 	fileid := args[0]
-	fmt.Printf("Dis_Download backendRemote1: %s\n", fileid)
+	fmt.Printf("Dis_Download fileId: %s\n", fileid)
 	_, err = GetFileInfoStruct(fileid)
 	if err != nil {
 		return err
@@ -130,7 +130,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 	return nil
 }
 
-func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, backendRemote string, workerCount int) (err error) {
+func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, fileId string, workerCount int) (err error) {
 	shardDir, err := reedsolomon.GetShardDir()
 	if err != nil {
 		return err
@@ -145,7 +145,7 @@ func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, b
 	// Worker function
 	downloader := func() {
 		for fileInfo := range jobs {
-			if err := downloadFile(fileInfo, shardDir, backendRemote, &mu, &errs); err != nil {
+			if err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs); err != nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
@@ -175,7 +175,7 @@ func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, b
 	return nil
 }
 
-func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, backendRemote string) (err error) {
+func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, fileId string) (err error) {
 	shardDir, err := reedsolomon.GetShardDir()
 	if err != nil {
 		return err
@@ -189,7 +189,7 @@ func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, backendR
 		wg.Add(1)
 		go func(fileInfo DistributedFile) {
 			defer wg.Done()
-			if err := downloadFile(fileInfo, shardDir, backendRemote, &mu, &errs); err != nil {
+			if err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs); err != nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
@@ -202,7 +202,7 @@ func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, backendR
 	return nil
 }
 
-func downloadFile(fileInfo DistributedFile, shardDir, backendRemote string, mu *sync.Mutex, errs *[]error) error {
+func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mutex, errs *[]error) error {
 	startTime := time.Now()
 
 	hashedFileName, err := CalculateHash(fileInfo.DistributedFile)
@@ -243,7 +243,7 @@ func downloadFile(fileInfo DistributedFile, shardDir, backendRemote string, mu *
 	}
 
 	// Update remote info
-	err = updateRemoteInfo_Down(backendRemote, fileInfo, throughputKbps, mu)
+	err = updateRemoteInfo_Down(fileId, fileInfo, throughputKbps, mu)
 	if err != nil {
 		return err
 	}
@@ -251,9 +251,9 @@ func downloadFile(fileInfo DistributedFile, shardDir, backendRemote string, mu *
 	return nil
 }
 
-func updateRemoteInfo_Down(backendRemote string, shardInfo DistributedFile, throughputKbps float64, mu *sync.Mutex) error {
+func updateRemoteInfo_Down(fileId string, shardInfo DistributedFile, throughputKbps float64, mu *sync.Mutex) error {
 	mu.Lock()
-	err := UpdateDistributedFile_CheckFlag(backendRemote, shardInfo.DistributedFile, true)
+	err := UpdateDistributedFile_CheckFlag(fileId, shardInfo.DistributedFile, true)
 	if err != nil {
 		mu.Unlock()
 		return fmt.Errorf("UpdateDistributedFileCheckFlag error: %v", err)
