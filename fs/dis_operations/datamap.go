@@ -199,20 +199,18 @@ func DoesFileStructExist(backendRemote string) (bool, error) {
 	return exists, nil
 }
 
-func GetDistributedFileStruct(backendRemote string) ([]DistributedFile, error) {
+func GetDistributedFileStruct(fileId string) ([]DistributedFile, error) {
 	filesMap, err := readJsonFile()
 	if err != nil {
 		return nil, err
 	}
 
-	backendRemoteHashString := generateBackendHash(backendRemote)
-
-	fileInfo, exists := filesMap[backendRemoteHashString]
+	fileInfo, exists := filesMap[fileId]
 	for fileInfo_temp, _ := range filesMap {
 		fmt.Printf("filesMap FileName: %s, FilePath: %s\n", filesMap[fileInfo_temp].FileName, filesMap[fileInfo_temp].FilePath)
 	}
 	if !exists {
-		return nil, fmt.Errorf("GetDistributedFileStruct file name '%s' not found", backendRemote)
+		return nil, fmt.Errorf("GetDistributedFileStruct file name '%s' not found", fileId)
 	}
 
 	disFiles := make([]DistributedFile, 0, len(fileInfo.DistributedFileInfos))
