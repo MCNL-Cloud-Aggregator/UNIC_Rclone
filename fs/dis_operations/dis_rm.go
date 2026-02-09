@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/rclone/rclone/cmd"
+	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/spf13/cobra"
 )
@@ -66,17 +67,28 @@ func Dis_rm(arg []string, reSignal bool) (err error) {
 }
 
 func remoteCallDeleteFile(args []string) (err error) {
-	fmt.Printf("Calling remoteCallDeleteFile with args: %v\n", args)
-
-	deleteFileCommand := *deleteFileDefinition
-	deleteFileCommand.SetArgs(args)
-
-	err = deleteFileCommand.Execute()
-	if err != nil {
-		return fmt.Errorf("error executing deleteCommand: %w", err)
+	// 1. 문자열 경로를 Fs와 FileName으로 파싱
+	// 예: "dropbox:Distribution/abc" -> (dropbox Fs 객체, "Distribution/abc")
+	remotePath := args[1]
+	f, fileName := cmd.NewFsFile(remotePath)
+	if fileName == "" {
+		return fmt.Errorf("invalid file path: %s", remotePath)
 	}
 
-	return nil
+	// 2. 해당 백엔드에서 Object(파일 객체)를 찾음
+	obj, err := f.NewObject(context.Background(), fileName)
+	if err != nil {
+		// 이미 파일이 없는 경우 성공으로 간주하거나 에러 처리
+		if err == fs.ErrorObjectNotFound {
+			return nil
+		}
+		return err
+	}
+
+	// 3. operations.DeleteFile을 사용하여 삭제 실행
+	// 이 함수는 내부적으로 각 클라우드의 Remove()를 호출하며,
+	// 휴지통 사용 여부 등은 rclone.conf 설정이나 전역 설정을 따릅니다.
+	return operations.DeleteFile(context.Background(), obj)
 }
 
 func startRmFileGoroutine(backendRemote string, distributedFileArray []DistributedFile) (err error) {

@@ -564,55 +564,6 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}
 	fs.Debugf(f, "----------dis_upload end--------------")
 
-	// 6. update entrytable.jsonl
-	fs.Debugf(f, "----------Update entrytable.jsonl start--------------")
-	remotePath := src.Remote()
-	//if !strings.HasPrefix(remotePath, "/") {
-	//	remotePath = "/" + remotePath
-	//}
-
-	fileName := filepath.Base(remotePath)
-
-	nextID, err := f.getNextID()
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	newNodeEntry := NodeEntry{
-		Id:   nextID,
-		Path: remotePath,
-		Name: fileName,
-		Type: "file",
-		Size: src.Size(),
-	}
-
-	// JSON 변환
-	entryJSON, err := json.Marshal(newNodeEntry)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal entry: %w", err)
-	}
-
-	// Mutex 잠금이 필요할까??
-	// entrytable update
-	//f.mu.Lock()
-	file, err := os.OpenFile(entrytable_path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	_, err = file.Write(entryJSON)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = file.WriteString("\n")
-	//f.mu.Unlock()
-	if err != nil {
-		return nil, fmt.Errorf("failed to update entry table: %w", err)
-	}
-	fs.Debugf(f, "----------Update entrytable.jsonl end--------------")
-
 	// 6. Return the object
 	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
 	return &Object{
