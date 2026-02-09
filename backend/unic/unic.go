@@ -674,7 +674,7 @@ func (o *Object) SetModTime(ctx context.Context, t time.Time) error      { retur
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
 	//downloadDir := "/원하는/기본/경로/download"
 	home, _ := os.UserHomeDir()
-	downloadDir := filepath.Join(home, "Download")
+	downloadDir := filepath.Join(home, "Download1234")
 
 	err := os.MkdirAll(downloadDir, 0755)
 	if err != nil {
@@ -688,7 +688,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	fileId := o.id
 	remotePath := o.remote
 	// Debug
-	fs.Debugf(o, "UNIC Open 호출됨: targetName=%s, tempDir=%s", fileId, downloadDir)
+	fmt.Printf("UNIC Open 호출됨: targetName=%s, tempDir=%s\n", fileId, downloadDir)
 
 	err = dis_operations.Dis_Download([]string{fileId, downloadDir, remotePath}, false)
 	if err != nil {

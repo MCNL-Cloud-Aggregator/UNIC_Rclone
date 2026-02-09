@@ -108,7 +108,7 @@ func calculateShardsNum(filename string) {
 	}
 }
 
-func DoEncode(fname string, backendRemote string, password string) ([]string, []string, int64, int64, int, int) {
+func DoEncode(fname string, fileId string, password string) ([]string, []string, int64, int64, int, int) {
 	fmt.Printf("fname: %s\n", fname)
 	var paths []string
 	var checksums []string
@@ -150,13 +150,13 @@ func DoEncode(fname string, backendRemote string, password string) ([]string, []
 	//// Create the resulting files.
 	//_, file := filepath.Split(encFile)
 
-	backendRemoteHash := sha256.Sum256([]byte(backendRemote))
-	backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
-	backendRemoteHashString = backendRemoteHashString + fileCryptExtension
+	//backendRemoteHash := sha256.Sum256([]byte(backendRemote))
+	//backendRemoteHashString := hex.EncodeToString(backendRemoteHash[:])
+	fileId_str := fileId + fileCryptExtension
 
 	// Get path and checksum of all shards
 	for i := range out {
-		outfn := fmt.Sprintf("%s.%d", backendRemoteHashString, i)
+		outfn := fmt.Sprintf("%s.%d", fileId_str, i)
 		fmt.Println("Creating", outfn)
 		out[i], err = os.Create(filepath.Join(path, outfn))
 		checkErr(err)
