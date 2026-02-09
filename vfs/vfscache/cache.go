@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rclone/rclone/backend/unic"
 	"github.com/rclone/rclone/fs"
 	fscache "github.com/rclone/rclone/fs/cache"
 	"github.com/rclone/rclone/fs/config"
@@ -265,6 +266,16 @@ func (c *Cache) toOSPath(name string) string {
 	return filepath.Join(c.root, toOSPath(name))
 }
 
+func (c *Cache) getDownloadPath(name string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	downloadDir := filepath.Join(home, "Download")
+	return filepath.Join(downloadDir, name), nil
+}
+
 // toOSPathMeta turns a remote relative name into an OS path in the
 // cache for the metadata
 func (c *Cache) toOSPathMeta(name string) string {
@@ -282,8 +293,14 @@ func (c *Cache) toOSPathMeta(name string) string {
 func (c *Cache) _get(name string) (item *Item, found bool) {
 	item = c.item[name]
 	found = item != nil
-	if !found {
-		item = newItem(c, name)
+
+	if !found { //todo: unic인지 검사한 후, download 파일에 존재하는 item이면 newDownloadItem을 실행하고 아니면  newItem을 실행
+		newfn := newItem
+		if _, ok := c.fremote.(*unic.Fs); ok {
+			newfn = newDownloadedItem
+		}
+
+		item = newfn(c, name)
 		c.item[name] = item
 	}
 	return item, found

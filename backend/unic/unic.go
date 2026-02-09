@@ -1,7 +1,6 @@
 package unic
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -73,7 +72,7 @@ type Fs struct {
 // Will definitely have info but maybe not meta
 type Object struct {
 	fs      *Fs       // what this object is part of
-	id      int       // ID of the object
+	id      string    // ID of the object
 	remote  string    // The remote path
 	size    int64     // size of the object
 	modTime time.Time // modification time of the object
@@ -82,7 +81,7 @@ type Object struct {
 // Directory describes a OneDrive directory
 type Directory struct {
 	fs     *Fs    // what this object is part of
-	id     int    // dir ID
+	id     string // dir ID
 	remote string // The remote path
 	size   int64  // size of directory and contents or -1 if unknown
 	items  int64  // number of objects or -1 for unknown
@@ -165,7 +164,7 @@ const (
 )
 
 type NodeEntry struct {
-	Id   int      `json:"id"`
+	Id   string   `json:"id"`
 	Path string   `json:"path"`
 	Name string   `json:"name"`
 	Type NodeType `json:"type"`
@@ -586,7 +585,7 @@ func extractValue(line string) string {
 }
 
 // newNodeEntry에서 사용할 새로운 ID를 받아오는 method
-func (f *Fs) getNextID() (nextID int, err error) {
+/*func (f *Fs) getNextID() (nextID int, err error) {
 	file, err := os.Open(entrytable_path)
 	if err != nil {
 		fs.Errorf(f, "Error opening entrytable: %v", err)
@@ -621,7 +620,7 @@ func (f *Fs) getNextID() (nextID int, err error) {
 	}
 
 	return nextID + 1, err
-}
+}*/
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error { return nil }
 func (f *Fs) Rmdir(ctx context.Context, dir string) error { return nil }
@@ -667,35 +666,38 @@ func (o *Object) SetModTime(ctx context.Context, t time.Time) error      { retur
 
 // UNIC의 파일로 read와 같은 system call이 들어올 때 실제 Cloud Storage의 파일로부터 데이터를 읽어올 수 있는 통로를 제공.
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
-	// 1. 임시 파일 경로 생성
-	tempDir, err := os.MkdirTemp("", "unic_temp_dir")
+	//downloadDir := "/원하는/기본/경로/download"
+	home, _ := os.UserHomeDir()
+	downloadDir := filepath.Join(home, "Download")
+
+	err := os.MkdirAll(downloadDir, 0755)
 	if err != nil {
 		return nil, err
 	}
 
 	// 2. Dis_Download 로직 호출
-	// targetName은 파일명만 추출해서 사용된다고 가정 (filepath.Base)
+	// fileId은 파일명만 추출해서 사용된다고 가정 (filepath.Base)
 	// unic의 remote 경로 전체가 필요한지, 파일명만 필요한지는 unic의 설계에 따름
 	// 현재 Dis_Download는 파일명을 키로 사용함.
-	targetName := o.remote
+	fileId := o.id
 
 	// Debug
-	fs.Debugf(o, "UNIC Open 호출됨: targetName=%s, tempDir=%s", targetName, tempDir)
+	fs.Debugf(o, "UNIC Open 호출됨: targetName=%s, tempDir=%s", fileId, downloadDir)
 
-	err = dis_operations.Dis_Download([]string{targetName, tempDir}, false)
+	err = dis_operations.Dis_Download([]string{fileId, downloadDir}, false)
 	if err != nil {
-		fs.Errorf(o, "Dis_Download 실패: targetName=%s, error=%v", targetName, err)
+		fs.Errorf(o, "Dis_Download 실패: targetName=%s, error=%v", fileId, err)
 		return nil, err
 	}
 
 	// 3. 실제 생성된 파일 경로 찾기
 	// Dis_Download가 tempDir 안에 readme.txt (혹은 .fcef 확장자 등)로 저장할 것이므로
 	// 실제 파일의 위치를 특정해야 합니다.
-	targetRealName := filepath.Base(targetName)
-	downloadedFilePath := filepath.Join(tempDir, targetRealName)
+	targetRealName := filepath.Base(fileId)
+	downloadedFilePath := filepath.Join(downloadDir, targetRealName)
 	f, err := os.Open(downloadedFilePath)
 	if err != nil {
-		os.RemoveAll(tempDir)
+		os.RemoveAll(downloadDir)
 		return nil, err
 	}
 	fs.Debugf(o, "dis_download 및 os.Open(downloadedFilePath) 성공: tempDir: %s", downloadedFilePath)

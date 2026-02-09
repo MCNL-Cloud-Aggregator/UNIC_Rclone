@@ -172,19 +172,19 @@ func RemoveFileFromMetadata(backendRemote string) error {
 	return writeJsonFile(getJsonFilePath(), filesMap)
 }
 
-func GetFileInfoStruct(backendRemote string) (FileInfo, error) {
+func GetFileInfoStruct(fileId string) (FileInfo, error) {
 	filesMap, err := readJsonFile()
 	if err != nil {
 		return FileInfo{}, err
 	}
 
-	backendRemoteHashString := generateBackendHash(backendRemote)
-	if fileInfo, exists := filesMap[backendRemoteHashString]; exists {
+	//backendRemoteHashString := generateBackendHash(backendRemote)
+	if fileInfo, exists := filesMap[fileId]; exists {
 		fmt.Printf("FileName: %s, FilePath: %s\n", fileInfo.FileName, fileInfo.FilePath)
 		return fileInfo, nil
 	}
 
-	return FileInfo{}, fmt.Errorf("GetFileInfoStruct file name '%s' not found", backendRemote)
+	return FileInfo{}, fmt.Errorf("GetFileInfoStruct file name '%s' not found", fileId)
 }
 
 func DoesFileStructExist(backendRemote string) (bool, error) {

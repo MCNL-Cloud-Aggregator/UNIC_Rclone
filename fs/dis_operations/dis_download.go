@@ -35,9 +35,9 @@ var copyCommandDefinitionForDown = &cobra.Command{
 
 func Dis_Download(args []string, reSignal bool) (err error) {
 
-	backendRemote := args[0]
-	fmt.Printf("Dis_Download backendRemote1: %s\n", backendRemote)
-	_, err = GetFileInfoStruct(backendRemote)
+	fileid := args[0]
+	fmt.Printf("Dis_Download backendRemote1: %s\n", fileid)
+	_, err = GetFileInfoStruct(fileid)
 	if err != nil {
 		return err
 	}
@@ -46,19 +46,19 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 
 	if reSignal {
 		//Get Distribution list(Check 읽어서 false인 것만 들고 오기)
-		distributedFileInfos, err = GetUncompletedFileInfo(backendRemote)
+		distributedFileInfos, err = GetUncompletedFileInfo(fileid)
 		if err != nil {
 			return err
 		}
 
 	} else {
 		//state 변경
-		err = UpdateFileFlag(backendRemote, "download")
+		err = UpdateFileFlag(fileid, "download")
 		if err != nil {
 			return err
 		}
 		fmt.Printf("---GetDistributedFileStruct start---\n")
-		distributedFileInfos, err = GetDistributedFileStruct(backendRemote)
+		distributedFileInfos, err = GetDistributedFileStruct(fileid)
 		fmt.Printf("distributedFileInfos) DistributedFile: %s, Remote: %s\n", distributedFileInfos[0].DistributedFile, distributedFileInfos[0].Remote)
 		fmt.Printf("---GetDistributedFileStruct end---\n")
 		if err != nil {
@@ -68,7 +68,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 
 	start := time.Now()
 	fmt.Printf("---startDownloadFileGoroutine_Worker start---\n")
-	if err := startDownloadFileGoroutine_Worker(distributedFileInfos, backendRemote, 32); err != nil {
+	if err := startDownloadFileGoroutine_Worker(distributedFileInfos, fileid, 32); err != nil {
 		return err
 	}
 	fmt.Printf("---startDownloadFileGoroutine_Worker end---\n")
@@ -84,7 +84,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 
 	// Move downloaded file to destination
 	fmt.Printf("---GetFileInfoStruct start---\n")
-	fileInfo, err := GetFileInfoStruct(backendRemote)
+	fileInfo, err := GetFileInfoStruct(fileid)
 	fmt.Printf("---GetFileInfoStruct end---\n")
 	if err != nil {
 		return err
@@ -97,13 +97,13 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 
 	//os.Exit(1)
 	fmt.Printf("---DoDecode start---\n")
-	fmt.Printf("Dis_Download backendRemote2: %s\n", backendRemote)
+	fmt.Printf("Dis_Download backendRemote2: %s\n", fileid)
 	//originalFileName := filepath.Base(backendRemote)
-	err = reedsolomon.DoDecode(backendRemote, absolutePath, fileInfo.Padding, checksums, fileInfo.Shard, fileInfo.Parity, tryGetPassword())
+	err = reedsolomon.DoDecode(fileid, absolutePath, fileInfo.Padding, checksums, fileInfo.Shard, fileInfo.Parity, tryGetPassword())
 	if err != nil {
-		result := ShowDescription_RemoveFile(backendRemote, err)
+		result := ShowDescription_RemoveFile(fileid, err)
 		if result {
-			err = Dis_rm([]string{backendRemote}, false)
+			err = Dis_rm([]string{fileid}, false)
 			if err != nil {
 				return err
 			}

@@ -165,6 +165,54 @@ func newItem(c *Cache, name string) (item *Item) {
 	return item
 }
 
+// newItem returns an item for the cache
+func newDownloadedItem(c *Cache, name string) (item *Item) {
+	now := time.Now()
+	item = &Item{
+		c:    c,
+		name: name,
+		info: Info{
+			ModTime: now,
+			ATime:   now,
+		},
+	}
+	item.cond = sync.Cond{L: &item.mu}
+	// check the cache file exists
+	osPath := c.toOSPath(name)
+	downloadPath, _ := c.getDownloadPath(name)
+
+	fi, statErr := os.Stat(downloadPath)
+	if statErr != nil {
+		/*if os.IsNotExist(statErr) {
+			item._removeMeta("cache file doesn't exist")
+		} else {
+			item.remove(fmt.Sprintf("failed to stat cache file: %v", statErr))
+		}*/
+		fi, statErr = os.Stat(osPath)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				item._removeMeta("cache file doesn't exist")
+			} else {
+				item.remove(fmt.Sprintf("failed to stat cache file: %v", statErr))
+			}
+		}
+	}
+
+	// Try to load the metadata
+	exists, err := item.load()
+	if !exists {
+		item._removeFile("metadata doesn't exist")
+	} else if err != nil {
+		item.remove(fmt.Sprintf("failed to load metadata: %v", err))
+	}
+
+	// Get size estimate (which is best we can do until Open() called)
+	if statErr == nil {
+		item.info.Size = fi.Size()
+	}
+	return item
+}
+
 // inUse returns true if the item is open or dirty
 func (item *Item) inUse() bool {
 	item.mu.Lock()
