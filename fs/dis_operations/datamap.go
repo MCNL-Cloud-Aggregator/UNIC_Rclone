@@ -421,17 +421,17 @@ func GetOriginalFileNameList(originalFileName string, hashedFileNameList []strin
 }
 
 // remove하다 멈췄을 때 어떤 파일을 마저 지워야하는지 알려주는 함수
-func GetUncompletedFileInfo(backendRemote string) ([]DistributedFile, error) {
+func GetUncompletedFileInfo(fileId string) ([]DistributedFile, error) {
 	filesMap, err := readJsonFile()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	backendRemoteHashString := generateBackendHash(backendRemote)
+	//backendRemoteHashString := generateBackendHash(backendRemote)
 
-	fileInfo, exists := filesMap[backendRemoteHashString]
+	fileInfo, exists := filesMap[fileId]
 	if !exists {
-		return nil, fmt.Errorf("original file '%s' not found", backendRemote)
+		return nil, fmt.Errorf("original file '%s' not found", fileId)
 	}
 
 	var uncompleted []DistributedFile
