@@ -674,7 +674,7 @@ func (o *Object) SetModTime(ctx context.Context, t time.Time) error      { retur
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
 	//downloadDir := "/원하는/기본/경로/download"
 	home, _ := os.UserHomeDir()
-	downloadDir := filepath.Join(home, "Download1234")
+	downloadDir := filepath.Join(home, "Download")
 
 	err := os.MkdirAll(downloadDir, 0755)
 	if err != nil {
