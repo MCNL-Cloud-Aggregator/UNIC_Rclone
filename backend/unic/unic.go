@@ -11,7 +11,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rclone/rclone/backend/unic/common"
@@ -24,8 +23,6 @@ import (
 	"github.com/rclone/rclone/fs/walk"
 )
 
-// inodetable path
-// var entrytable_path = "/home/yrcho/.config/rclone/entrytable.jsonl"
 var entrytable_path string
 var rclone_path string
 
@@ -52,15 +49,6 @@ func init() {
 		}},
 	})
 }
-
-//Fs에 들어갈 property 정의
-//NewFs 정의
-//common object 정의
-//upstream Fs 정의
-//로직 구성
-
-// upstream fs, backend fs
-// NewFs
 
 type Fs struct {
 	name     string         // name of this remote
@@ -89,75 +77,6 @@ type Directory struct {
 	items  int64  // number of objects or -1 for unknown
 }
 
-/*
-// Object is a filesystem like object provided by an Fs
-type Object interface {
-	ObjectInfo
-
-	// SetModTime sets the metadata on the object to set the modification date
-	SetModTime(ctx context.Context, t time.Time) error
-
-	// Open opens the file for read.  Call Close() on the returned io.ReadCloser
-	Open(ctx context.Context, options ...OpenOption) (io.ReadCloser, error)
-
-	// Update in to the object with the modTime given of the given size
-	//
-	// When called from outside an Fs by rclone, src.Size() will always be >= 0.
-	// But for unknown-sized objects (indicated by src.Size() == -1), Upload should either
-	// return an error or update the object properly (rather than e.g. calling panic).
-	Update(ctx context.Context, in io.Reader, src ObjectInfo, options ...OpenOption) error
-
-	// Removes this object
-	Remove(ctx context.Context) error
-}
-
-// ObjectInfo provides read only information about an object.
-type ObjectInfo interface {
-	DirEntry
-
-	// Hash returns the selected checksum of the file
-	// If no checksum is available it returns ""
-	Hash(ctx context.Context, ty hash.Type) (string, error)
-
-	// Storable says whether this object can be stored
-	Storable() bool
-}
-
-// DirEntry provides read only information about the common subset of
-// a Dir or Object.  These are returned from directory listings - type
-// assert them into the correct type.
-type DirEntry interface {
-	// Fs returns read only access to the Fs that this object is part of
-	Fs() Info
-
-	// String returns a description of the Object
-	String() string
-
-	// Remote returns the remote path
-	Remote() string
-
-	// ModTime returns the modification date of the file
-	// It should return a best guess if one isn't available
-	ModTime(context.Context) time.Time
-
-	// Size returns the size of the file
-	Size() int64
-}
-
-// Directory is a filesystem like directory provided by an Fs
-type Directory interface {
-	DirEntry
-
-	// Items returns the count of items in this directory or this
-	// directory and subdirectories if known, -1 for unknown
-	Items() int64
-
-	// ID returns the internal ID of this directory if known, or
-	// "" otherwise
-	ID() string
-}
-*/
-// -------------------------------------------------------------------------------------------------------
 type NodeType string
 
 const (
@@ -472,28 +391,29 @@ func (f *Fs) getUpstreamRemotes() []config.Remote {
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	fs.Debugf(f, "----------Put method Start--------------")
-	// 1. Create a temporary directory
-	fs.Debugf(f, "----------Create a temporary directory start--------------")
+	fmt.Println("----------Put method Start--------------")
+
+	// Create a temporary directory
+	fmt.Println("----------Create a temporary directory start--------------")
 	tempDir, err := os.MkdirTemp("", "unic_upload")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tempDir) // Clean up
-	fs.Debugf(f, "----------Create a temporary directory end--------------")
+	fmt.Println("----------Create a temporary directory end--------------")
 
-	// 2. Create the file with the correct name
-	fs.Debugf(f, "----------Create a temporary file start--------------")
+	// Create the file with the correct name
+	fmt.Println("----------Create a temporary file start--------------")
 	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
-	fs.Debugf(f, "src.Remote(): %s", src.Remote())
-	fs.Debugf(f, "tempFilePath: %s", tempFilePath)
+	fmt.Printf("src.Remote(): %s\n", src.Remote())
+	fmt.Printf("tempFilePath: %s\n", tempFilePath)
 	tempFile, err := os.Create(tempFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 	fs.Debugf(f, "----------Create a temporary file end--------------")
 
-	// 3. Copy content
+	// Copy content
 	fs.Debugf(f, "----------Copy content to temp file start--------------")
 	_, err = io.Copy(tempFile, in)
 
@@ -507,55 +427,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}
 	fs.Debugf(f, "----------Copy content to temp file end--------------")
 
-	// // 4. Get ID from server
-
-	// // rclone.conf에서 sessionID와 ssrfToken 가져오기
-	// rclone_conf_file, _ := os.Open("config.unic")
-	// defer rclone_conf_file.Close()
-
-	// scanner := bufio.NewScanner(rclone_conf_file)
-	// var sessionID, ssrfToken string
-
-	// isUnic := false
-	// for scanner.Scan() {
-	// 	line := strings.TrimSpace(scanner.Text())
-
-	// 	if !isUnic && strings.HasPrefix(line, "[unic]") {
-	// 		isUnic = true
-	// 	}
-
-	// 	if isUnic {
-	// 		// 키워드 포함 여부 확인
-	// 		if strings.HasPrefix(line, "sessionID") {
-	// 			sessionID = extractValue(line)
-	// 		} else if strings.HasPrefix(line, "ssrfToken") {
-	// 			ssrfToken = extractValue(line)
-	// 		}
-	// 	}
-	// }
-
-	// fmt.Println("Extracted SessionID:", sessionID)
-	// fmt.Println("Extracted SSRF Token:", ssrfToken)
-
-	// // request 객체 생성
-	// req, err := http.NewRequest("GET", "https://balneologic-pseudomiraculous-leonidas.ngrok-free.dev/api/v1", nil)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// req.Header.Set("X-XSRF-TOKEN", ssrfToken)
-	// req.Header.Set("JSESSIONID", sessionID)
-
-	// // HTTP request 전송
-	// resp, err := http.Get("https://jsonplaceholder.typicode.com/posts/1")
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// defer resp.Body.Close()
-
-	// // HTTP response에서 쿠키 파싱해서
-
-	// 5. Call Dis_Upload
+	// Call Dis_Upload
 	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
 	fs.Debugf(f, "----------dis_upload start--------------")
 	fs.Debugf(f, "tempFilePath: %s, remotes: %s", tempFilePath, f.getUpstreamRemotes())
@@ -569,7 +441,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}
 	fs.Debugf(f, "----------dis_upload end--------------")
 
-	// 6. Return the object
+	// Return the object
 	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
 	return &Object{
 		fs:      f,
@@ -589,44 +461,6 @@ func extractValue(line string) string {
 	val = strings.TrimSuffix(val, "\"}")
 	return val
 }
-
-// newNodeEntry에서 사용할 새로운 ID를 받아오는 method
-/*func (f *Fs) getNextID() (nextID int, err error) {
-	file, err := os.Open(entrytable_path)
-	if err != nil {
-		fs.Errorf(f, "Error opening entrytable: %v", err)
-		return -1, err
-	}
-	defer file.Close()
-
-	// Next ID
-	nextID = -1
-
-	// json file scanner
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text() // 한 줄 읽기
-
-		// 빈 줄 건너뛰기
-		if line == "" {
-			continue
-		}
-
-		// JSON 파싱
-		var entry NodeEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			fmt.Printf("json 파싱 에러: %v\n", err)
-			return -1, err
-		}
-
-		// 4. 여기서 객체 하나씩 처리
-		if entry.Id > nextID {
-			nextID = entry.Id
-		}
-	}
-
-	return nextID + 1, err
-}*/
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error { return nil }
 func (f *Fs) Rmdir(ctx context.Context, dir string) error { return nil }
@@ -712,11 +546,6 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	return f, nil
 }
 
-type tempFileCloser struct {
-	*os.File
-	tempPath string
-}
-
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
 	// dis_rm 수행하여 기존의 파일 삭제
 	fs.Debugf(o, "----------Update method start----------")
@@ -730,7 +559,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	fs.Debugf(o, "----------dis_operations.Dis_rm end----------")
 
 	// dis_upload 수행하여 새로운 파일 업로드
-	// 1. Create a temporary directory
+	// Create a temporary directory
 	fs.Debugf(o, "----------Create a temporary directory start--------------")
 	tempDir, err := os.MkdirTemp("", "unic_upload")
 	if err != nil {
@@ -739,7 +568,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	defer os.RemoveAll(tempDir) // Clean up
 	fs.Debugf(o, "----------Create a temporary directory end--------------")
 
-	// 2. Create the file with the correct name
+	// Create the file with the correct name
 	fs.Debugf(o, "----------Create a temporary file start--------------")
 	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
 	fs.Debugf(o, "src.Remote(): %s", src.Remote())
@@ -750,7 +579,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	}
 	fs.Debugf(o, "----------Create a temporary file end--------------")
 
-	// 3. Copy content
+	// Copy content
 	fs.Debugf(o, "----------Copy content to temp file start--------------")
 	_, err = io.Copy(tempFile, in)
 
@@ -764,7 +593,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	}
 	fs.Debugf(o, "----------Copy content to temp file end--------------")
 
-	// 4. Call Dis_Upload
+	// Call Dis_Upload
 	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
 	fs.Debugf(o, "----------dis_upload start--------------")
 	fs.Debugf(o, "tempFilePath: %s, remotes: %s", tempFilePath, o.fs.getUpstreamRemotes())
@@ -795,19 +624,6 @@ func (o *Object) Remove(ctx context.Context) error {
 	return nil
 }
 
-func multithread(num int, fn func(int)) {
-	var wg sync.WaitGroup
-	for i := 0; i < num; i++ {
-		wg.Add(1)
-		i := i
-		go func() {
-			defer wg.Done()
-			fn(i)
-		}()
-	}
-	wg.Wait()
-}
-
 func (d *Directory) Fs() fs.Info {
 	return d.fs
 }
@@ -833,5 +649,5 @@ func (d *Directory) Items() int64 {
 }
 
 func (d *Directory) ID() string {
-	return fmt.Sprintf("%d", d.id)
+	return fmt.Sprintf("%s", d.id)
 }
