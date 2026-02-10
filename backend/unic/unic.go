@@ -55,8 +55,7 @@ type Fs struct {
 	features *fs.Features   // optional features
 	opt      common.Options // parsed options
 	root     string         // the path we are working on
-	//upstreams []*upstream.Fs // ToDo: unic spec에 맞게 새로 정의해야함
-	hashSet hash.Set // intersection of hash types
+	hashSet  hash.Set       // intersection of hash types
 }
 
 // Will definitely have info but maybe not meta
@@ -102,7 +101,6 @@ func (t NodeType) Valid() bool {
 func (i *NodeEntry) IsDir() bool  { return i.Type == NodeTypeDir }
 func (i *NodeEntry) IsFile() bool { return i.Type == NodeTypeFile }
 
-// -------------------------------------------------------------------------------------------------------
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
 	// Parse config into Options struct
 	opt := new(common.Options)
@@ -154,8 +152,6 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	// Fs 객체에 features 저장
 	f.features = features
 
-	// 추후 필요시 Move, Purge, ListR 등 추가
-
 	return f, nil
 }
 
@@ -186,8 +182,7 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (entry fs.Object, err
 	return f.newObject(ctx, remote, nil)
 }
 
-// entrytable을 읽는 코드가 이거 말고도 있음
-// 나중에 entrytable 찾는 코드를 method로 만들어서 재사용성을 높이는 방안 생각
+// entrytable을 읽어서 remote에 맞는 NodeEntry return
 func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
@@ -224,6 +219,7 @@ func (f *Fs) newDir(node NodeEntry) (entry fs.Directory, err error) {
 	return d, nil
 }
 
+// path가 prefix 하위에 있는지 확인
 func isUnderDir(path, prefix string) bool {
 	if prefix == "" || prefix == "/" {
 		return true
@@ -238,6 +234,7 @@ func isUnderDir(path, prefix string) bool {
 	return strings.HasPrefix(path, prefix+"/")
 }
 
+// path가 prefix의 바로 하위에 있는지 확인
 func isDirectChild(prefix, path_ string) bool {
 	if prefix == "/" {
 		return path.Dir(path_) == "/"
@@ -266,6 +263,7 @@ func openEntryTable(path string) (*io.PipeReader, error) {
 	return pr, nil
 }
 
+// entrytable에서 DirEntry 목록 가져오기
 func (f *Fs) getList(ctx context.Context, dir string, checkDir func(path, prefix string) bool) ([]fs.DirEntry, error) {
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
@@ -315,8 +313,8 @@ func (f *Fs) getList(ctx context.Context, dir string, checkDir func(path, prefix
 	return result, nil
 }
 
-// makeRemote converts an absolute path (node.Path) into
-// a Fs.root-relative path (remote) suitable for DirEntry.
+// 절대경로를 상대경로로 바꿔줌
+// path에서 prefix 제거
 func makeRemote(path string, prefix string) string {
 	// root 기준이면 그대로 상대경로
 	if prefix == "" || prefix == "/" {
@@ -390,56 +388,52 @@ func (f *Fs) getUpstreamRemotes() []config.Remote {
 	return result
 }
 
+// UNIC을 마운팅한 mount point에 write system call이 들어올 때 실행
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	fmt.Println("----------Put method Start--------------")
+	fmt.Println("UNIC: Put: Put method Start")
 
 	// Create a temporary directory
-	fmt.Println("----------Create a temporary directory start--------------")
+	fmt.Println("UNIC: Put: Create a temporary directory start")
 	tempDir, err := os.MkdirTemp("", "unic_upload")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+		return nil, fmt.Errorf("UNIC: Put: failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tempDir) // Clean up
-	fmt.Println("----------Create a temporary directory end--------------")
+	defer os.RemoveAll(tempDir) // Clean up tempDir
 
 	// Create the file with the correct name
-	fmt.Println("----------Create a temporary file start--------------")
+	fmt.Println("UNIC: Put: Create a temporary file start")
 	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
-	fmt.Printf("src.Remote(): %s\n", src.Remote())
-	fmt.Printf("tempFilePath: %s\n", tempFilePath)
+	fmt.Printf("src.Remote(): %s, tempFilePath: %s\n", src.Remote(), tempFilePath)
 	tempFile, err := os.Create(tempFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
+		return nil, fmt.Errorf("UNIC: Put: failed to create temp file: %w", err)
 	}
-	fs.Debugf(f, "----------Create a temporary file end--------------")
 
 	// Copy content
-	fs.Debugf(f, "----------Copy content to temp file start--------------")
+	fmt.Println("UNIC: Put: Copy content to temp file start")
 	_, err = io.Copy(tempFile, in)
-
-	tempFile.Sync()
-	closeErr := tempFile.Close()
 	if err != nil {
-		return nil, fmt.Errorf("failed to write to temp file: %w", err)
+		return nil, fmt.Errorf("UNIC: Put: failed to write to temp file: %w", err)
 	}
+
+	tempFile.Sync() // 필수적인가?
+	closeErr := tempFile.Close()
 	if closeErr != nil {
-		return nil, fmt.Errorf("failed to close temp file: %w", closeErr)
+		return nil, fmt.Errorf("UNIC: Put: failed to close temp file: %w", closeErr)
 	}
-	fs.Debugf(f, "----------Copy content to temp file end--------------")
 
 	// Call Dis_Upload
-	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
-	fs.Debugf(f, "----------dis_upload start--------------")
-	fs.Debugf(f, "tempFilePath: %s, remotes: %s", tempFilePath, f.getUpstreamRemotes())
+	fmt.Println("UNIC: Put: dis_upload start")
+	fmt.Printf("tempFilePath: %s, remotes: %s\n", tempFilePath, f.getUpstreamRemotes())
 
 	remotePath := src.Remote()
 	backendRemoteHash := sha256.Sum256([]byte(remotePath))
 	fileID := hex.EncodeToString(backendRemoteHash[:])
 	err = dis_operations.Dis_Upload([]string{tempFilePath, remotePath, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
-		return nil, fmt.Errorf("Dis_Upload failed: %w", err)
+		return nil, fmt.Errorf("UNIC: Put: Dis_Upload failed: %w", err)
 	}
-	fs.Debugf(f, "----------dis_upload end--------------")
+	fmt.Println("UNIC: Put: Put Success")
 
 	// Return the object
 	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
@@ -449,17 +443,6 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		size:    src.Size(),
 		modTime: src.ModTime(ctx),
 	}, nil
-}
-
-func extractValue(line string) string {
-	parts := strings.Split(line, "=")
-	if len(parts) < 2 {
-		return ""
-	}
-	val := strings.TrimSpace(parts[1]) // {"value"}
-	val = strings.TrimPrefix(val, "{\"")
-	val = strings.TrimSuffix(val, "\"}")
-	return val
 }
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error { return nil }
@@ -504,9 +487,12 @@ func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) { retur
 func (o *Object) Storable() bool                                         { return true }
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error      { return nil }
 
-// UNIC의 파일로 read와 같은 system call이 들어올 때 실제 Cloud Storage의 파일로부터 데이터를 읽어올 수 있는 통로를 제공.
+// UNIC을 마운팅한 mount point에 read system call이 들어올 때 실행
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
-	//downloadDir := "/원하는/기본/경로/download"
+	fmt.Println("UNIC: Open: Open method Start")
+
+	// Download 폴더 생성
+	fmt.Println("UNIC: Open: Download 폴더 생성")
 	home, _ := os.UserHomeDir()
 	downloadDir := filepath.Join(home, "Download")
 
@@ -515,34 +501,28 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 		return nil, err
 	}
 
-	// 2. Dis_Download 로직 호출
-	// fileId은 파일명만 추출해서 사용된다고 가정 (filepath.Base)
-	// unic의 remote 경로 전체가 필요한지, 파일명만 필요한지는 unic의 설계에 따름
-	// 현재 Dis_Download는 파일명을 키로 사용함.
+	// Dis_Download 로직 호출
+	fmt.Println("UNIC: Open: Dis_Download start")
 	fileId := o.id
 	remotePath := o.remote
-	// Debug
-	fmt.Printf("UNIC Open 호출됨: targetName=%s, tempDir=%s\n", fileId, downloadDir)
+	fmt.Printf("fileId=%s, downloadDir=%s, remotePath=%s\n", fileId, downloadDir, remotePath)
 
 	err = dis_operations.Dis_Download([]string{fileId, downloadDir, remotePath}, false)
 	if err != nil {
-		fs.Errorf(o, "Dis_Download 실패: targetName=%s, error=%v", fileId, err)
-		return nil, err
+		return nil, fmt.Errorf("UNIC: Open: Dis_Download 실패: fileId=%s, error=%v", fileId, err)
 	}
 
-	// 3. 실제 생성된 파일 경로 찾기
-	// Dis_Download가 tempDir 안에 readme.txt (혹은 .fcef 확장자 등)로 저장할 것이므로
-	// 실제 파일의 위치를 특정해야 합니다.
+	// Dis_Download 결과 만들어진 파일 open
+	fmt.Println("UNIC: Open: Dis_Download 결과 만들어진 파일 open")
 	targetRealName := filepath.Base(remotePath)
 	downloadedFilePath := filepath.Join(downloadDir, targetRealName)
 	f, err := os.Open(downloadedFilePath)
 	if err != nil {
 		os.RemoveAll(downloadDir)
-		return nil, err
+		return nil, fmt.Errorf("UNIC: Open: downloadedFilePath open 실패: fileId=%s, error=%v", fileId, err)
 	}
-	fs.Debugf(o, "dis_download 및 os.Open(downloadedFilePath) 성공: tempDir: %s", downloadedFilePath)
+	fmt.Println("UNIC: Open: Open Success")
 
-	// 4. Close 시 임시 파일 삭제
 	return f, nil
 }
 
@@ -609,17 +589,19 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	return nil
 }
 
+// UNIC을 마운팅한 mount point에 unlink system call이 들어올 때 실행
 func (o *Object) Remove(ctx context.Context) error {
-	fs.Debugf(o, "----------Remove method start----------")
+	fmt.Println("UNIC: Remove: Remove method start")
 
 	// dis_rm 수행
-	fs.Debugf(o, "----------dis_operations.Dis_rm start----------")
+	fmt.Println("UNIC: Remove: Remove dis_rm start")
 	fileId := o.id
 	err := dis_operations.Dis_rm([]string{fileId}, false)
 	if err != nil {
 		return err
 	}
-	fs.Debugf(o, "----------dis_operations.Dis_rm end----------")
+
+	fmt.Println("UNIC: Remove: Remove Success")
 
 	return nil
 }
