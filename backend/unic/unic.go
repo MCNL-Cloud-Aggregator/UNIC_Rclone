@@ -11,7 +11,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rclone/rclone/backend/unic/common"
@@ -24,8 +23,6 @@ import (
 	"github.com/rclone/rclone/fs/walk"
 )
 
-// inodetable path
-// var entrytable_path = "/home/yrcho/.config/rclone/entrytable.jsonl"
 var entrytable_path string
 var rclone_path string
 
@@ -53,22 +50,12 @@ func init() {
 	})
 }
 
-//Fs에 들어갈 property 정의
-//NewFs 정의
-//common object 정의
-//upstream Fs 정의
-//로직 구성
-
-// upstream fs, backend fs
-// NewFs
-
 type Fs struct {
 	name     string         // name of this remote
 	features *fs.Features   // optional features
 	opt      common.Options // parsed options
 	root     string         // the path we are working on
-	//upstreams []*upstream.Fs // ToDo: unic spec에 맞게 새로 정의해야함
-	hashSet hash.Set // intersection of hash types
+	hashSet  hash.Set       // intersection of hash types
 }
 
 // Will definitely have info but maybe not meta
@@ -89,75 +76,6 @@ type Directory struct {
 	items  int64  // number of objects or -1 for unknown
 }
 
-/*
-// Object is a filesystem like object provided by an Fs
-type Object interface {
-	ObjectInfo
-
-	// SetModTime sets the metadata on the object to set the modification date
-	SetModTime(ctx context.Context, t time.Time) error
-
-	// Open opens the file for read.  Call Close() on the returned io.ReadCloser
-	Open(ctx context.Context, options ...OpenOption) (io.ReadCloser, error)
-
-	// Update in to the object with the modTime given of the given size
-	//
-	// When called from outside an Fs by rclone, src.Size() will always be >= 0.
-	// But for unknown-sized objects (indicated by src.Size() == -1), Upload should either
-	// return an error or update the object properly (rather than e.g. calling panic).
-	Update(ctx context.Context, in io.Reader, src ObjectInfo, options ...OpenOption) error
-
-	// Removes this object
-	Remove(ctx context.Context) error
-}
-
-// ObjectInfo provides read only information about an object.
-type ObjectInfo interface {
-	DirEntry
-
-	// Hash returns the selected checksum of the file
-	// If no checksum is available it returns ""
-	Hash(ctx context.Context, ty hash.Type) (string, error)
-
-	// Storable says whether this object can be stored
-	Storable() bool
-}
-
-// DirEntry provides read only information about the common subset of
-// a Dir or Object.  These are returned from directory listings - type
-// assert them into the correct type.
-type DirEntry interface {
-	// Fs returns read only access to the Fs that this object is part of
-	Fs() Info
-
-	// String returns a description of the Object
-	String() string
-
-	// Remote returns the remote path
-	Remote() string
-
-	// ModTime returns the modification date of the file
-	// It should return a best guess if one isn't available
-	ModTime(context.Context) time.Time
-
-	// Size returns the size of the file
-	Size() int64
-}
-
-// Directory is a filesystem like directory provided by an Fs
-type Directory interface {
-	DirEntry
-
-	// Items returns the count of items in this directory or this
-	// directory and subdirectories if known, -1 for unknown
-	Items() int64
-
-	// ID returns the internal ID of this directory if known, or
-	// "" otherwise
-	ID() string
-}
-*/
-// -------------------------------------------------------------------------------------------------------
 type NodeType string
 
 const (
@@ -183,7 +101,6 @@ func (t NodeType) Valid() bool {
 func (i *NodeEntry) IsDir() bool  { return i.Type == NodeTypeDir }
 func (i *NodeEntry) IsFile() bool { return i.Type == NodeTypeFile }
 
-// -------------------------------------------------------------------------------------------------------
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
 	// Parse config into Options struct
 	opt := new(common.Options)
@@ -235,8 +152,6 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	// Fs 객체에 features 저장
 	f.features = features
 
-	// 추후 필요시 Move, Purge, ListR 등 추가
-
 	return f, nil
 }
 
@@ -267,8 +182,7 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (entry fs.Object, err
 	return f.newObject(ctx, remote, nil)
 }
 
-// entrytable을 읽는 코드가 이거 말고도 있음
-// 나중에 entrytable 찾는 코드를 method로 만들어서 재사용성을 높이는 방안 생각
+// entrytable을 읽어서 remote에 맞는 NodeEntry return
 func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
@@ -305,6 +219,7 @@ func (f *Fs) newDir(node NodeEntry) (entry fs.Directory, err error) {
 	return d, nil
 }
 
+// path가 prefix 하위에 있는지 확인
 func isUnderDir(path, prefix string) bool {
 	if prefix == "" || prefix == "/" {
 		return true
@@ -319,6 +234,7 @@ func isUnderDir(path, prefix string) bool {
 	return strings.HasPrefix(path, prefix+"/")
 }
 
+// path가 prefix의 바로 하위에 있는지 확인
 func isDirectChild(prefix, path_ string) bool {
 	if prefix == "/" {
 		return path.Dir(path_) == "/"
@@ -347,6 +263,7 @@ func openEntryTable(path string) (*io.PipeReader, error) {
 	return pr, nil
 }
 
+// entrytable에서 DirEntry 목록 가져오기
 func (f *Fs) getList(ctx context.Context, dir string, checkDir func(path, prefix string) bool) ([]fs.DirEntry, error) {
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
@@ -396,8 +313,8 @@ func (f *Fs) getList(ctx context.Context, dir string, checkDir func(path, prefix
 	return result, nil
 }
 
-// makeRemote converts an absolute path (node.Path) into
-// a Fs.root-relative path (remote) suitable for DirEntry.
+// 절대경로를 상대경로로 바꿔줌
+// path에서 prefix 제거
 func makeRemote(path string, prefix string) string {
 	// root 기준이면 그대로 상대경로
 	if prefix == "" || prefix == "/" {
@@ -471,105 +388,54 @@ func (f *Fs) getUpstreamRemotes() []config.Remote {
 	return result
 }
 
+// UNIC을 마운팅한 mount point에 write system call이 들어올 때 실행
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	fs.Debugf(f, "----------Put method Start--------------")
-	// 1. Create a temporary directory
-	fs.Debugf(f, "----------Create a temporary directory start--------------")
+	fmt.Println("UNIC: Put: Put method Start")
+
+	// Create a temporary directory
+	fmt.Println("UNIC: Put: Create a temporary directory start")
 	tempDir, err := os.MkdirTemp("", "unic_upload")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+		return nil, fmt.Errorf("UNIC: Put: failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tempDir) // Clean up
-	fs.Debugf(f, "----------Create a temporary directory end--------------")
+	defer os.RemoveAll(tempDir) // Clean up tempDir
 
-	// 2. Create the file with the correct name
-	fs.Debugf(f, "----------Create a temporary file start--------------")
+	// Create the file with the correct name
+	fmt.Println("UNIC: Put: Create a temporary file start")
 	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
-	fs.Debugf(f, "src.Remote(): %s", src.Remote())
-	fs.Debugf(f, "tempFilePath: %s", tempFilePath)
+	fmt.Printf("src.Remote(): %s, tempFilePath: %s\n", src.Remote(), tempFilePath)
 	tempFile, err := os.Create(tempFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
+		return nil, fmt.Errorf("UNIC: Put: failed to create temp file: %w", err)
 	}
-	fs.Debugf(f, "----------Create a temporary file end--------------")
 
-	// 3. Copy content
-	fs.Debugf(f, "----------Copy content to temp file start--------------")
+	// Copy content
+	fmt.Println("UNIC: Put: Copy content to temp file start")
 	_, err = io.Copy(tempFile, in)
-
-	tempFile.Sync()
-	closeErr := tempFile.Close()
 	if err != nil {
-		return nil, fmt.Errorf("failed to write to temp file: %w", err)
+		return nil, fmt.Errorf("UNIC: Put: failed to write to temp file: %w", err)
 	}
+
+	tempFile.Sync() // 필수적인가?
+	closeErr := tempFile.Close()
 	if closeErr != nil {
-		return nil, fmt.Errorf("failed to close temp file: %w", closeErr)
+		return nil, fmt.Errorf("UNIC: Put: failed to close temp file: %w", closeErr)
 	}
-	fs.Debugf(f, "----------Copy content to temp file end--------------")
 
-	// // 4. Get ID from server
-
-	// // rclone.conf에서 sessionID와 ssrfToken 가져오기
-	// rclone_conf_file, _ := os.Open("config.unic")
-	// defer rclone_conf_file.Close()
-
-	// scanner := bufio.NewScanner(rclone_conf_file)
-	// var sessionID, ssrfToken string
-
-	// isUnic := false
-	// for scanner.Scan() {
-	// 	line := strings.TrimSpace(scanner.Text())
-
-	// 	if !isUnic && strings.HasPrefix(line, "[unic]") {
-	// 		isUnic = true
-	// 	}
-
-	// 	if isUnic {
-	// 		// 키워드 포함 여부 확인
-	// 		if strings.HasPrefix(line, "sessionID") {
-	// 			sessionID = extractValue(line)
-	// 		} else if strings.HasPrefix(line, "ssrfToken") {
-	// 			ssrfToken = extractValue(line)
-	// 		}
-	// 	}
-	// }
-
-	// fmt.Println("Extracted SessionID:", sessionID)
-	// fmt.Println("Extracted SSRF Token:", ssrfToken)
-
-	// // request 객체 생성
-	// req, err := http.NewRequest("GET", "https://balneologic-pseudomiraculous-leonidas.ngrok-free.dev/api/v1", nil)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// req.Header.Set("X-XSRF-TOKEN", ssrfToken)
-	// req.Header.Set("JSESSIONID", sessionID)
-
-	// // HTTP request 전송
-	// resp, err := http.Get("https://jsonplaceholder.typicode.com/posts/1")
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// defer resp.Body.Close()
-
-	// // HTTP response에서 쿠키 파싱해서
-
-	// 5. Call Dis_Upload
-	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
-	fs.Debugf(f, "----------dis_upload start--------------")
-	fs.Debugf(f, "tempFilePath: %s, remotes: %s", tempFilePath, f.getUpstreamRemotes())
+	// Call Dis_Upload
+	fmt.Println("UNIC: Put: dis_upload start")
+	fmt.Printf("tempFilePath: %s, remotes: %s\n", tempFilePath, f.getUpstreamRemotes())
 
 	remotePath := src.Remote()
 	backendRemoteHash := sha256.Sum256([]byte(remotePath))
 	fileID := hex.EncodeToString(backendRemoteHash[:])
 	err = dis_operations.Dis_Upload([]string{tempFilePath, remotePath, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
-		return nil, fmt.Errorf("Dis_Upload failed: %w", err)
+		return nil, fmt.Errorf("UNIC: Put: Dis_Upload failed: %w", err)
 	}
-	fs.Debugf(f, "----------dis_upload end--------------")
+	fmt.Println("UNIC: Put: Put Success")
 
-	// 6. Return the object
+	// Return the object
 	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
 	return &Object{
 		fs:      f,
@@ -578,55 +444,6 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		modTime: src.ModTime(ctx),
 	}, nil
 }
-
-func extractValue(line string) string {
-	parts := strings.Split(line, "=")
-	if len(parts) < 2 {
-		return ""
-	}
-	val := strings.TrimSpace(parts[1]) // {"value"}
-	val = strings.TrimPrefix(val, "{\"")
-	val = strings.TrimSuffix(val, "\"}")
-	return val
-}
-
-// newNodeEntry에서 사용할 새로운 ID를 받아오는 method
-/*func (f *Fs) getNextID() (nextID int, err error) {
-	file, err := os.Open(entrytable_path)
-	if err != nil {
-		fs.Errorf(f, "Error opening entrytable: %v", err)
-		return -1, err
-	}
-	defer file.Close()
-
-	// Next ID
-	nextID = -1
-
-	// json file scanner
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text() // 한 줄 읽기
-
-		// 빈 줄 건너뛰기
-		if line == "" {
-			continue
-		}
-
-		// JSON 파싱
-		var entry NodeEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			fmt.Printf("json 파싱 에러: %v\n", err)
-			return -1, err
-		}
-
-		// 4. 여기서 객체 하나씩 처리
-		if entry.Id > nextID {
-			nextID = entry.Id
-		}
-	}
-
-	return nextID + 1, err
-}*/
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error { return nil }
 func (f *Fs) Rmdir(ctx context.Context, dir string) error { return nil }
@@ -670,9 +487,12 @@ func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) { retur
 func (o *Object) Storable() bool                                         { return true }
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error      { return nil }
 
-// UNIC의 파일로 read와 같은 system call이 들어올 때 실제 Cloud Storage의 파일로부터 데이터를 읽어올 수 있는 통로를 제공.
+// UNIC을 마운팅한 mount point에 read system call이 들어올 때 실행
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
-	//downloadDir := "/원하는/기본/경로/download"
+	fmt.Println("UNIC: Open: Open method Start")
+
+	// Download 폴더 생성
+	fmt.Println("UNIC: Open: Download 폴더 생성")
 	home, _ := os.UserHomeDir()
 	downloadDir := filepath.Join(home, "Download")
 
@@ -681,40 +501,29 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 		return nil, err
 	}
 
-	// 2. Dis_Download 로직 호출
-	// fileId은 파일명만 추출해서 사용된다고 가정 (filepath.Base)
-	// unic의 remote 경로 전체가 필요한지, 파일명만 필요한지는 unic의 설계에 따름
-	// 현재 Dis_Download는 파일명을 키로 사용함.
+	// Dis_Download 로직 호출
+	fmt.Println("UNIC: Open: Dis_Download start")
 	fileId := o.id
 	remotePath := o.remote
-	// Debug
-	fmt.Printf("UNIC Open 호출됨: targetName=%s, tempDir=%s\n", fileId, downloadDir)
+	fmt.Printf("fileId=%s, downloadDir=%s, remotePath=%s\n", fileId, downloadDir, remotePath)
 
 	err = dis_operations.Dis_Download([]string{fileId, downloadDir, remotePath}, false)
 	if err != nil {
-		fs.Errorf(o, "Dis_Download 실패: targetName=%s, error=%v", fileId, err)
-		return nil, err
+		return nil, fmt.Errorf("UNIC: Open: Dis_Download 실패: fileId=%s, error=%v", fileId, err)
 	}
 
-	// 3. 실제 생성된 파일 경로 찾기
-	// Dis_Download가 tempDir 안에 readme.txt (혹은 .fcef 확장자 등)로 저장할 것이므로
-	// 실제 파일의 위치를 특정해야 합니다.
+	// Dis_Download 결과 만들어진 파일 open
+	fmt.Println("UNIC: Open: Dis_Download 결과 만들어진 파일 open")
 	targetRealName := filepath.Base(remotePath)
 	downloadedFilePath := filepath.Join(downloadDir, targetRealName)
 	f, err := os.Open(downloadedFilePath)
 	if err != nil {
 		os.RemoveAll(downloadDir)
-		return nil, err
+		return nil, fmt.Errorf("UNIC: Open: downloadedFilePath open 실패: fileId=%s, error=%v", fileId, err)
 	}
-	fs.Debugf(o, "dis_download 및 os.Open(downloadedFilePath) 성공: tempDir: %s", downloadedFilePath)
+	fmt.Println("UNIC: Open: Open Success")
 
-	// 4. Close 시 임시 파일 삭제
 	return f, nil
-}
-
-type tempFileCloser struct {
-	*os.File
-	tempPath string
 }
 
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
@@ -730,7 +539,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	fs.Debugf(o, "----------dis_operations.Dis_rm end----------")
 
 	// dis_upload 수행하여 새로운 파일 업로드
-	// 1. Create a temporary directory
+	// Create a temporary directory
 	fs.Debugf(o, "----------Create a temporary directory start--------------")
 	tempDir, err := os.MkdirTemp("", "unic_upload")
 	if err != nil {
@@ -739,7 +548,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	defer os.RemoveAll(tempDir) // Clean up
 	fs.Debugf(o, "----------Create a temporary directory end--------------")
 
-	// 2. Create the file with the correct name
+	// Create the file with the correct name
 	fs.Debugf(o, "----------Create a temporary file start--------------")
 	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
 	fs.Debugf(o, "src.Remote(): %s", src.Remote())
@@ -750,7 +559,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	}
 	fs.Debugf(o, "----------Create a temporary file end--------------")
 
-	// 3. Copy content
+	// Copy content
 	fs.Debugf(o, "----------Copy content to temp file start--------------")
 	_, err = io.Copy(tempFile, in)
 
@@ -764,7 +573,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	}
 	fs.Debugf(o, "----------Copy content to temp file end--------------")
 
-	// 4. Call Dis_Upload
+	// Call Dis_Upload
 	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
 	fs.Debugf(o, "----------dis_upload start--------------")
 	fs.Debugf(o, "tempFilePath: %s, remotes: %s", tempFilePath, o.fs.getUpstreamRemotes())
@@ -780,32 +589,21 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	return nil
 }
 
+// UNIC을 마운팅한 mount point에 unlink system call이 들어올 때 실행
 func (o *Object) Remove(ctx context.Context) error {
-	fs.Debugf(o, "----------Remove method start----------")
+	fmt.Println("UNIC: Remove: Remove method start")
 
 	// dis_rm 수행
-	fs.Debugf(o, "----------dis_operations.Dis_rm start----------")
+	fmt.Println("UNIC: Remove: Remove dis_rm start")
 	fileId := o.id
 	err := dis_operations.Dis_rm([]string{fileId}, false)
 	if err != nil {
 		return err
 	}
-	fs.Debugf(o, "----------dis_operations.Dis_rm end----------")
+
+	fmt.Println("UNIC: Remove: Remove Success")
 
 	return nil
-}
-
-func multithread(num int, fn func(int)) {
-	var wg sync.WaitGroup
-	for i := 0; i < num; i++ {
-		wg.Add(1)
-		i := i
-		go func() {
-			defer wg.Done()
-			fn(i)
-		}()
-	}
-	wg.Wait()
 }
 
 func (d *Directory) Fs() fs.Info {
@@ -833,5 +631,5 @@ func (d *Directory) Items() int64 {
 }
 
 func (d *Directory) ID() string {
-	return fmt.Sprintf("%d", d.id)
+	return fmt.Sprintf("%s", d.id)
 }
