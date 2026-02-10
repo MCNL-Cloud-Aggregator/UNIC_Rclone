@@ -699,7 +699,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	// 3. 실제 생성된 파일 경로 찾기
 	// Dis_Download가 tempDir 안에 readme.txt (혹은 .fcef 확장자 등)로 저장할 것이므로
 	// 실제 파일의 위치를 특정해야 합니다.
-	targetRealName := filepath.Base(fileId)
+	targetRealName := filepath.Base(remotePath)
 	downloadedFilePath := filepath.Join(downloadDir, targetRealName)
 	f, err := os.Open(downloadedFilePath)
 	if err != nil {
