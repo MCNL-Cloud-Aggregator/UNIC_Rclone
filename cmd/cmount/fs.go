@@ -650,7 +650,7 @@ func getMode(node os.FileInfo) uint32 {
 var (
 	_ fuse.FileSystemInterface = (*FS)(nil)
 	_ fuse.FileSystemOpenEx    = (*FS)(nil)
-	_ fuse.FileSystemGetpath   = (*FS)(nil)
+	//_ fuse.FileSystemGetpath   = (*FS)(nil)
 	//_ fuse.FileSystemChflags    = (*FS)(nil)
 	//_ fuse.FileSystemSetcrtime  = (*FS)(nil)
 	//_ fuse.FileSystemSetchgtime = (*FS)(nil)

@@ -32,6 +32,7 @@ require (
 	github.com/dop251/scsu v0.0.0-20220106150536-84ac88021d00
 	github.com/dropbox/dropbox-sdk-go-unofficial/v6 v6.0.5
 	github.com/flew-software/filecrypt v1.1.0
+	github.com/fsnotify/fsnotify v1.7.0
 	github.com/gabriel-vasile/mimetype v1.4.7
 	github.com/gdamore/tcell/v2 v2.7.4
 	github.com/go-chi/chi/v5 v5.1.0
@@ -76,7 +77,7 @@ require (
 	github.com/t3rm1n4l/go-mega v0.0.0-20241213150454-ec0027fb0002
 	github.com/unknwon/goconfig v1.0.0
 	github.com/willscott/go-nfs v0.0.3-0.20240425122109-91bc38957cc9
-	github.com/winfsp/cgofuse v1.5.1-0.20221118130120-84c0898ad2e0
+	github.com/winfsp/cgofuse v1.5.0
 	github.com/xanzy/ssh-agent v0.3.3
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	github.com/yunify/qingstor-sdk-go/v3 v3.2.0
@@ -94,7 +95,6 @@ require (
 	gopkg.in/validator.v2 v2.0.1
 	gopkg.in/yaml.v2 v2.4.0
 	storj.io/uplink v1.13.1
-
 )
 
 require (
@@ -147,7 +147,6 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/flynn/noise v1.0.1 // indirect
 	github.com/fredbi/uri v1.1.0 // indirect
-	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/fyne-io/gl-js v0.0.0-20220119005834-d2da28d9ccfe // indirect
 	github.com/fyne-io/glfw-js v0.0.0-20241126112943-313d8a0fe1d0 // indirect
 	github.com/fyne-io/image v0.0.0-20220602074514-4956b0afb3d2 // indirect
@@ -254,7 +253,6 @@ require (
 	github.com/pkg/xattr v0.4.10
 	golang.org/x/mobile v0.0.0-20240716161057-1ad2df20a8b6
 	golang.org/x/term v0.27.0
-
 )
 
 retract (
@@ -263,3 +261,5 @@ retract (
 	[v1.11.3, v1.11.5] // https://github.com/klauspost/reedsolomon/pull/238
 	v1.11.2 // https://github.com/klauspost/reedsolomon/pull/229
 )
+
+replace github.com/winfsp/cgofuse => github.com/billziss-gh/cgofuse v1.5.0

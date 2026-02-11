@@ -183,6 +183,8 @@ func newDownloadedItem(c *Cache, name string) (item *Item) {
 	osPath := c.toOSPath(name)
 	ufs := c.fremote.(*unic.Fs)
 	downloadPath, _ := ufs.MakeOSDownloadPath(name)
+	fmt.Println("cache path: %s", osPath)
+	fmt.Println("Download path: %s", downloadPath)
 
 	fi, statErr := os.Stat(downloadPath)
 	if statErr != nil {
@@ -191,6 +193,7 @@ func newDownloadedItem(c *Cache, name string) (item *Item) {
 		} else {
 			item.remove(fmt.Sprintf("failed to stat cache file: %v", statErr))
 		}*/
+		fmt.Println("file not found in Download path: %s", downloadPath)
 		fi, statErr = os.Stat(osPath)
 		if statErr != nil {
 			if os.IsNotExist(statErr) {
