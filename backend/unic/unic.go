@@ -539,13 +539,8 @@ func (f *Fs) MakeOSDownloadPath(remotePath string) (string, error) {
 		home,
 		"rclone",
 		"Download",
-<<<<<<< HEAD
 		f.GetUserId(),
 		strings.Split(f.Name(), "{")[0],
-=======
-		strings.Split(f.GetUserId(), "{")[0],
-		f.Name(),
->>>>>>> main
 		remotePath,
 	), nil
 }
