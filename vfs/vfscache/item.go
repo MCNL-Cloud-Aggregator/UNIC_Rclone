@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rclone/rclone/backend/unic"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/fserrors"
 	"github.com/rclone/rclone/fs/operations"
@@ -177,9 +178,11 @@ func newDownloadedItem(c *Cache, name string) (item *Item) {
 		},
 	}
 	item.cond = sync.Cond{L: &item.mu}
+
 	// check the cache file exists
 	osPath := c.toOSPath(name)
-	downloadPath, _ := c.getDownloadPath(name)
+	ufs := c.fremote.(*unic.Fs)
+	downloadPath, _ := ufs.MakeOSDownloadPath(name)
 
 	fi, statErr := os.Stat(downloadPath)
 	if statErr != nil {

@@ -182,7 +182,12 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (entry fs.Object, err
 	return f.newObject(ctx, remote, nil)
 }
 
-// entrytable을 읽어서 remote에 맞는 NodeEntry return
+func (f *Fs) GetUserId() string {
+	return f.opt.UserID
+}
+
+// entrytable을 읽는 코드가 이거 말고도 있음
+// 나중에 entrytable 찾는 코드를 method로 만들어서 재사용성을 높이는 방안 생각
 func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
@@ -487,16 +492,35 @@ func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) { retur
 func (o *Object) Storable() bool                                         { return true }
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error      { return nil }
 
+func (f *Fs) MakeOSDownloadPath(remotePath string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(
+		home,
+		"rclone",
+		"Download",
+		f.GetUserId(),
+		f.Name(),
+		remotePath,
+	), nil
+}
+
 // UNIC을 마운팅한 mount point에 read system call이 들어올 때 실행
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
 	fmt.Println("UNIC: Open: Open method Start")
 
-	// Download 폴더 생성
+	// Download 폴더 생성 : home/rclone/Download/userId/remotename/remotepath
 	fmt.Println("UNIC: Open: Download 폴더 생성")
-	home, _ := os.UserHomeDir()
-	downloadDir := filepath.Join(home, "Download")
-
-	err := os.MkdirAll(downloadDir, 0755)
+	remotePath := o.Remote()
+	downloadPath, err := o.fs.MakeOSDownloadPath(remotePath)
+	if err != nil {
+		return nil, err
+	}
+	downloadDir := filepath.Dir(downloadPath)
+	err = os.MkdirAll(downloadDir, 0755)
 	if err != nil {
 		return nil, err
 	}
@@ -504,7 +528,6 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	// Dis_Download 로직 호출
 	fmt.Println("UNIC: Open: Dis_Download start")
 	fileId := o.id
-	remotePath := o.remote
 	fmt.Printf("fileId=%s, downloadDir=%s, remotePath=%s\n", fileId, downloadDir, remotePath)
 
 	err = dis_operations.Dis_Download([]string{fileId, downloadDir, remotePath}, false)
@@ -514,11 +537,9 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 
 	// Dis_Download 결과 만들어진 파일 open
 	fmt.Println("UNIC: Open: Dis_Download 결과 만들어진 파일 open")
-	targetRealName := filepath.Base(remotePath)
-	downloadedFilePath := filepath.Join(downloadDir, targetRealName)
-	f, err := os.Open(downloadedFilePath)
+	f, err := os.Open(downloadPath)
 	if err != nil {
-		os.RemoveAll(downloadDir)
+		os.Remove(downloadPath)
 		return nil, fmt.Errorf("UNIC: Open: downloadedFilePath open 실패: fileId=%s, error=%v", fileId, err)
 	}
 	fmt.Println("UNIC: Open: Open Success")
