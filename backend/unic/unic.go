@@ -46,6 +46,9 @@ func init() {
 			Name:    "cache_time",
 			Help:    "Cache time of usage and free space (in seconds).\n\nThis option is only useful when a path preserving policy is used.",
 			Default: 120,
+		}, {
+			Name: "userid",
+			Help: "User ID for unic backend",
 		}},
 	})
 }
@@ -346,7 +349,7 @@ func makeRemote(path string, prefix string) string {
 }
 
 func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
-	fmt.Println("UNIC: ListR: ListR method Start")
+
 	list := walk.NewListRHelper(callback)
 
 	entries, err := f.getList(ctx, dir, isUnderDir)
@@ -363,7 +366,6 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 /* Fs */
 // Fs
 func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
-	fmt.Println("UNIC: List: List method Start")
 	entries, err := f.getList(ctx, dir, isDirectChild)
 	if err != nil {
 		return nil, err
@@ -451,11 +453,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}, nil
 }
 
-func (f *Fs) Mkdir(ctx context.Context, dir string) error {
-
-	return nil
-}
-
+func (f *Fs) Mkdir(ctx context.Context, dir string) error { return nil }
 func (f *Fs) Rmdir(ctx context.Context, dir string) error { return nil }
 
 func (f *Fs) Name() string           { return f.name }
@@ -508,7 +506,7 @@ func (f *Fs) MakeOSDownloadPath(remotePath string) (string, error) {
 		"rclone",
 		"Download",
 		f.GetUserId(),
-		f.Name(),
+		strings.Split(f.Name(), "{")[0],
 		remotePath,
 	), nil
 }
@@ -521,6 +519,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	fmt.Println("UNIC: Open: Download 폴더 생성")
 	remotePath := o.Remote()
 	downloadPath, err := o.fs.MakeOSDownloadPath(remotePath)
+	fmt.Printf("UNIC: Open: downloadPath: %s\n", downloadPath)
 	if err != nil {
 		return nil, err
 	}
