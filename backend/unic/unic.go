@@ -46,6 +46,9 @@ func init() {
 			Name:    "cache_time",
 			Help:    "Cache time of usage and free space (in seconds).\n\nThis option is only useful when a path preserving policy is used.",
 			Default: 120,
+		}, {
+			Name: "userid",
+			Help: "User ID for unic backend",
 		}},
 	})
 }
