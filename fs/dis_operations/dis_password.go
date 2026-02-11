@@ -28,7 +28,8 @@ func generateRandomPassword(length int) (string, error) {
 	return base64.URLEncoding.EncodeToString(bytes)[:length], nil
 }
 
-func tryGetPassword() string {
+// TryGetPassword returns the password for distributed operations, creating it if it doesn't exist.
+func TryGetPassword() string {
 	path := GetRcloneDirPath()
 	filePath := filepath.Join(path, "password.txt")
 
