@@ -88,13 +88,13 @@ const (
 
 type NodeEntry struct {
 	Id   string   `json:"id"`
-	Path string   `json:"path"`
 	Name string   `json:"name"`
+	Path string   `json:"path"`
 	Type NodeType `json:"type"`
 
-	Size    int64     `json:"size"`    // size of the object
-	ModTime time.Time `json:"modtime"` // modification time of the object
-	Items   int64     `json:"items"`   // number of objects or -1 for unknown
+	Size int64 `json:"size"` // size of the object
+	//ModTime time.Time `json:"modtime"` // modification time of the object
+	Items int64 `json:"items"` // number of objects or -1 for unknown
 }
 
 func (t NodeType) Valid() bool {
@@ -167,7 +167,6 @@ func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.
 	if node != nil {
 		o.id = node.Id
 		o.size = node.Size
-		o.modTime = node.ModTime
 	} else {
 		foundNode, err := f.findNodeFromTable(remote)
 		if err != nil {
@@ -176,7 +175,6 @@ func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.
 
 		o.id = foundNode.Id
 		o.size = foundNode.Size
-		o.modTime = foundNode.ModTime
 	}
 	return o, err
 }
@@ -435,8 +433,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	fmt.Printf("tempFilePath: %s, remotes: %s\n", tempFilePath, f.getUpstreamRemotes())
 
 	remotePath := src.Remote()
-	backendRemoteHash := sha256.Sum256([]byte(remotePath))
-	fileID := hex.EncodeToString(backendRemoteHash[:])
+	fileID := generateHash((remotePath))
 	err = dis_operations.Dis_Upload([]string{tempFilePath, remotePath, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
 		return nil, fmt.Errorf("UNIC: Put: Dis_Upload failed: %w", err)
@@ -453,7 +450,44 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}, nil
 }
 
-func (f *Fs) Mkdir(ctx context.Context, dir string) error { return nil }
+func generateHash(remotePath string) string {
+	backendRemoteHash := sha256.Sum256([]byte(remotePath))
+	fileID := hex.EncodeToString(backendRemoteHash[:])
+
+	return fileID
+}
+
+// UNIC을 마운팅한 mount point에 mkdir system call이 들어올 때 실행
+func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
+	fmt.Println("UNIC: Mkdir: Mkdir method Start")
+
+	// entrytable open
+	entryTable, err := os.OpenFile(entrytable_path, os.O_WRONLY|os.O_APPEND, 0755)
+	if err != nil {
+		return err
+	}
+	defer entryTable.Close()
+
+	// entrytable에 쓸 NodeEntry 정의
+	fmt.Printf("UNIC: Mkdir: dirPath: %s\n", dirPath)
+	var node NodeEntry // entrytable에 쓸 데이터를 저장하고 있을 변수
+
+	node.Id = generateHash(dirPath)
+	node.Name = filepath.Base(dirPath)
+	node.Path = dirPath
+	node.Items = 0
+	node.Size = 0
+	node.Type = "dir"
+
+	// entrytable write
+	encoder := json.NewEncoder(entryTable)
+	if err := encoder.Encode(node); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (f *Fs) Rmdir(ctx context.Context, dir string) error { return nil }
 
 func (f *Fs) Name() string           { return f.name }
@@ -505,8 +539,13 @@ func (f *Fs) MakeOSDownloadPath(remotePath string) (string, error) {
 		home,
 		"rclone",
 		"Download",
+<<<<<<< HEAD
+		f.GetUserId(),
+		strings.Split(f.Name(), "{")[0],
+=======
 		strings.Split(f.GetUserId(), "{")[0],
 		f.Name(),
+>>>>>>> main
 		remotePath,
 	), nil
 }
@@ -519,6 +558,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	fmt.Println("UNIC: Open: Download 폴더 생성")
 	remotePath := o.Remote()
 	downloadPath, err := o.fs.MakeOSDownloadPath(remotePath)
+	fmt.Printf("UNIC: Open: downloadPath: %s\n", downloadPath)
 	if err != nil {
 		return nil, err
 	}
