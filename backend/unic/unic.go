@@ -341,7 +341,7 @@ func makeRemote(path string, prefix string) string {
 }
 
 func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
-
+	fmt.Println("UNIC: ListR: ListR method Start")
 	list := walk.NewListRHelper(callback)
 
 	entries, err := f.getList(ctx, dir, isUnderDir)
@@ -358,6 +358,7 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 /* Fs */
 // Fs
 func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
+	fmt.Println("UNIC: List: List method Start")
 	entries, err := f.getList(ctx, dir, isDirectChild)
 	if err != nil {
 		return nil, err
@@ -445,7 +446,11 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}, nil
 }
 
-func (f *Fs) Mkdir(ctx context.Context, dir string) error { return nil }
+func (f *Fs) Mkdir(ctx context.Context, dir string) error {
+
+	return nil
+}
+
 func (f *Fs) Rmdir(ctx context.Context, dir string) error { return nil }
 
 func (f *Fs) Name() string           { return f.name }

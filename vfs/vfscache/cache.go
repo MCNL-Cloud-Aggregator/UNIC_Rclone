@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rclone/rclone/backend/unic"
 	"github.com/rclone/rclone/fs"
 	fscache "github.com/rclone/rclone/fs/cache"
 	"github.com/rclone/rclone/fs/config"
@@ -296,9 +295,9 @@ func (c *Cache) _get(name string) (item *Item, found bool) {
 
 	if !found { //todo: unic인지 검사한 후, download 파일에 존재하는 item이면 newDownloadItem을 실행하고 아니면  newItem을 실행
 		newfn := newItem
-		if _, ok := c.fremote.(*unic.Fs); ok {
+		/*if _, ok := c.fremote.(*unic.Fs); ok {
 			newfn = newDownloadedItem
-		}
+		}*/
 
 		item = newfn(c, name)
 		c.item[name] = item
