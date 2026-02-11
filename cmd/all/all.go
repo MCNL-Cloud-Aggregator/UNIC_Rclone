@@ -26,6 +26,7 @@ import (
 	_ "github.com/rclone/rclone/cmd/dis_config"
 	_ "github.com/rclone/rclone/cmd/dis_download"
 	_ "github.com/rclone/rclone/cmd/dis_ls"
+	_ "github.com/rclone/rclone/cmd/dis_password"
 	_ "github.com/rclone/rclone/cmd/dis_rm"
 	_ "github.com/rclone/rclone/cmd/dis_upload"
 	_ "github.com/rclone/rclone/cmd/genautocomplete"

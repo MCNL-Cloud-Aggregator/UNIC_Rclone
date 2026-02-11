@@ -182,7 +182,7 @@ func createHashNames(distributedFileArray []DistributedFile) (hashNameMap map[st
 }
 
 func prepareUpload(absolutePath string, backendRemote string, fileId string, target UploadTargets) (hashNameMap map[string]string, distributedFileInfos []DistributedFile, err error) {
-	dis_names, checksums, shardSize, padding, shard, parity := reedsolomon.DoEncode(absolutePath, fileId, tryGetPassword())
+	dis_names, checksums, shardSize, padding, shard, parity := reedsolomon.DoEncode(absolutePath, fileId, TryGetPassword())
 	fmt.Println("Shard:", shard)
 	fmt.Println("Parity:", parity)
 	//remotes := config.GetRemotes()
