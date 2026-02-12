@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/rclone/rclone/backend/unic"
@@ -38,16 +39,54 @@ var (
 )
 
 func newUnicFileHandle(d *Dir, f *File, flags int) (*UnicFileHandle, error) {
-	lPath, _ := f.Fs().(*unic.Fs).MakeOSDownloadPath(f.o.Remote())
+	fmt.Printf("unichandle: newUnicFileHandle: f.Path(): %s\n", f.Path())
 
+	// UNIC에서 open되는 파일은 모두 download dir에 존재한다고 가정
+	lPath, err := f.Fs().(*unic.Fs).MakeOSDownloadPath(f.Path())
+	if err != nil {
+		return nil, fmt.Errorf("unichandle: newUnicFileHandle: err: %s\n", err)
+	}
+
+	// unicFileHandle 생성
 	fh := &UnicFileHandle{
-		remote:    f.o.Remote(),
+		remote:    f.Path(),
 		flags:     flags,
 		file:      f,
 		localPath: lPath,
+		opened:    true,
 	}
+
+	// 이미 download dir에 캐싱되어 있어서 localFile이 이미 존재할 경우 fh.localFile 채우기
+	// 그렇지 않을 경우 localFile 생성한 이후 Open
+	fmt.Printf("unichandle: newUnicFileHandle: lPath: %s\n", lPath)
+	_, err = os.Stat(lPath)
+	if err != nil {
+		localFileDir := filepath.Dir(lPath)
+		err = os.MkdirAll(localFileDir, 0755)
+		if err != nil {
+			return nil, fmt.Errorf("unichandle: newUnicFileHandle: err: %s\n", err)
+		}
+
+		_, err = os.Create(lPath)
+		if err != nil {
+			return nil, fmt.Errorf("unichandle: newUnicFileHandle: err: %s\n", err)
+		}
+
+		fh.localFile, err = os.OpenFile(lPath, os.O_CREATE|os.O_RDWR, 0777)
+		if err != nil {
+			return nil, fmt.Errorf("unichandle: newUnicFileHandle: err: %s\n", err)
+		}
+	} else {
+		fh.localFile, err = os.OpenFile(lPath, os.O_CREATE|os.O_RDWR, 0777)
+		if err != nil {
+			return nil, fmt.Errorf("unichandle: newUnicFileHandle: err: %s\n", err)
+		}
+	}
+
 	fh.cond = sync.Cond{L: &fh.mu}
 	fh.file.addWriter(fh)
+
+	fmt.Println("unichandle: newUnicFileHandle: Success")
 	return fh, nil
 }
 
@@ -63,8 +102,7 @@ func (f *File) openUnic(flags int) (fh *UnicFileHandle, err error) {
 
 	fh, err = newUnicFileHandle(d, f, flags)
 	if err != nil {
-		fs.Debugf(f.Path(), "File.openRW failed: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("unichandle: openUnic: err: %s\n", err)
 	}
 	return fh, nil
 }
@@ -138,6 +176,7 @@ func (fh *UnicFileHandle) Node() Node {
 //
 // Implementations must not retain p.
 func (fh *UnicFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
+	fmt.Println("unichandle: newUnicFileHandle: WriteAt")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 	return fh.writeAt(p, off)
@@ -145,8 +184,7 @@ func (fh *UnicFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
 
 // Implementation of WriteAt - call with lock held
 func (fh *UnicFileHandle) writeAt(p []byte, off int64) (n int, err error) {
-	fh.mu.Lock()
-	defer fh.mu.Unlock()
+	fmt.Println("unichandle: newUnicFileHandle: writeAt")
 
 	if fh.closed {
 		return 0, ECLOSED
@@ -209,6 +247,7 @@ func (fh *UnicFileHandle) Offset() (offset int64) {
 //
 // Must be called with fh.mu held
 func (fh *UnicFileHandle) close() (err error) {
+	fmt.Println("unichandle: close: close method start")
 	if fh.closed {
 		return ECLOSED
 	}
@@ -222,26 +261,21 @@ func (fh *UnicFileHandle) close() (err error) {
 		return nil
 	}
 
-	if fh.localFile != nil {
-		_ = fh.localFile.Sync() // 디스크 동기화 강제 실행
-		if closeErr := fh.localFile.Close(); closeErr != nil {
-			fs.Errorf(fh.remote, "File Closing Failed: %v", closeErr)
-		}
-	}
-
+	// unic.go의 Put_ method 실행
 	if fh.isDirty {
 		fs.Debugf(fh.remote, "Fixes on file Detected")
 
-		/*newObj, uploadErr := fh.file.Fs().(*unic.Fs).Put(context.TODO(), fh.localFile, oi) //fh.d.vfs.Fs().Put(context.Background(), fh.localPath, fh.o, nil)
+		fmt.Println("unichandle: close: Put_() method start")
+		newObj, uploadErr := fh.file.Fs().(*unic.Fs).Put_(context.TODO(), fh.localFile, fh.remote) //fh.d.vfs.Fs().Put(context.Background(), fh.localPath, fh.o, nil)
 		if uploadErr != nil {
 			fs.Errorf(fh.remote, "upload failed: %v", uploadErr)
 			return uploadErr
 		}
 
-		// 5. 성공 시 VFS의 객체 정보 업데이트
+		fh.o = newObj
+
 		fh.file.setObject(newObj)
-		fh.isDirty = false*/
-		//fs.Debugf(fh.remote, "업로드 완료 및 객체 업데이트 성공")
+		fh.isDirty = false
 	}
 
 	return nil
@@ -318,10 +352,11 @@ func (fh *UnicFileHandle) Stat() (os.FileInfo, error) {
 
 // Truncate file to given size
 func (fh *UnicFileHandle) Truncate(size int64) (err error) {
+	fmt.Println("unichandle: Truncate: Truncate method start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 
-	fs.Debugf(fh.remote, "UnicWriteFileHandle: Truncate to size %d", size)
+	fmt.Printf("unichandle: Truncate: size: %d\n", size)
 
 	// 1. 로컬 파일 포인터가 있는지 확인
 	if fh.localFile == nil {
