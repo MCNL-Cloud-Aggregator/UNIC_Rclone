@@ -25,6 +25,7 @@ type FileInfo struct {
 	DisFileSize          int64                      `json:"distributed_file_size"`
 	Shard                int                        `json:"shard_count"`
 	Parity               int                        `json:"parity_count"`
+	RemoteList           []string                   `json:"remote_list"`
 	Flag                 bool                       `json:"flag"`
 	State                string                     `json:"state"`
 	Checksum             string                     `json:"checksum"`
