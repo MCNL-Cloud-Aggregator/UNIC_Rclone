@@ -526,8 +526,6 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 		if node.Type == "dir" {
 			fmt.Printf("UNIC: Rmdir: removeNodeFromTable method Start, node.Path: %s\n", node.Path)
 			removeNodeFromTable(node.Path)
-		} else if node.Type == "file" { // node가 file일 경우 해당 파일에 대한 unlink system call 호출
-			fmt.Println("test")
 		} else {
 			return fmt.Errorf("entrytable.jsonl type error\n")
 		}
