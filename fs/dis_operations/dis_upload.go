@@ -217,7 +217,7 @@ func prepareUpload(absolutePath string, backendRemote string, fileId string, tar
 		return nil, nil, fmt.Errorf("errors occurred during hashing: %v", errs)
 	}
 
-	err = MakeDataMap(absolutePath, backendRemote, fileId, distributedFileInfos, shardSize, padding, shard, parity)
+	err = MakeDataMap(absolutePath, backendRemote, fileId, distributedFileInfos, shardSize, padding, shard, parity, remotes)
 	if err != nil {
 		return nil, nil, err
 	}
