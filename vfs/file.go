@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/rclone/rclone/backend/unic"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/log"
 	"github.com/rclone/rclone/fs/operations"
@@ -889,7 +890,10 @@ func (f *File) Open(flags int) (fd Handle, err error) {
 	d := f.d
 	f.mu.RUnlock()
 	CacheMode := d.vfs.Opt.CacheMode
-	if CacheMode >= vfscommon.CacheModeMinimal && (d.vfs.cache.InUse(f.CachePath()) || d.vfs.cache.Exists(f.CachePath())) {
+	if _, ok := f.Fs().(*unic.Fs); ok {
+		// unic.Fs 타입이 맞을 때 실행될 로직
+		fd, err = f.openUnic(flags)
+	} else if CacheMode >= vfscommon.CacheModeMinimal && (d.vfs.cache.InUse(f.CachePath()) || d.vfs.cache.Exists(f.CachePath())) {
 		fd, err = f.openRW(flags)
 	} else if read && write {
 		if CacheMode >= vfscommon.CacheModeMinimal {

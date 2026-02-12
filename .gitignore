@@ -1,6 +1,3 @@
-*.exe
 rclone
-*.jpg
-entrytable.jsonl
-mp
 backend/unic/test/*
+go1.22.1.linux-amd64.tar.gz

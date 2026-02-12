@@ -29,7 +29,7 @@ var rclone_path string
 // Register with Fs
 func init() {
 	homeDir, _ := os.UserHomeDir()
-	entrytable_path = filepath.Join(homeDir, ".config", "rclone", "entrytable.jsonl")
+	entrytable_path = filepath.Join(filepath.Dir(config.GetConfigPath()), "entrytable.jsonl")
 	rclone_path = filepath.Join(homeDir, ".config", "rclone", "rclone.conf")
 	fs.Register(&fs.RegInfo{
 		Name:        "unic",
@@ -105,6 +105,9 @@ func (i *NodeEntry) IsDir() bool  { return i.Type == NodeTypeDir }
 func (i *NodeEntry) IsFile() bool { return i.Type == NodeTypeFile }
 
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
+	//fmt.Printf("---------------------------------\nname of remote: %s\n---------------------------------\n", name)
+	name = strings.Split(name, "{")[0]
+	//------------------------------------------------------------------------------------------------------------------------
 	// Parse config into Options struct
 	opt := new(common.Options)
 	err := configstruct.Set(m, opt)
@@ -640,10 +643,10 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	fmt.Println("UNIC: Open: Download 폴더 생성")
 	remotePath := o.Remote()
 	downloadPath, err := o.fs.MakeOSDownloadPath(remotePath)
-	fmt.Printf("UNIC: Open: downloadPath: %s\n", downloadPath)
 	if err != nil {
 		return nil, err
 	}
+
 	downloadDir := filepath.Dir(downloadPath)
 	err = os.MkdirAll(downloadDir, 0755)
 	if err != nil {
@@ -655,9 +658,13 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	fileId := o.id
 	fmt.Printf("fileId=%s, downloadDir=%s, remotePath=%s\n", fileId, downloadDir, remotePath)
 
-	err = dis_operations.Dis_Download([]string{fileId, downloadDir, remotePath}, false)
-	if err != nil {
-		return nil, fmt.Errorf("UNIC: Open: Dis_Download 실패: fileId=%s, error=%v", fileId, err)
+	fi, err := os.Stat(downloadPath)
+
+	if fi == nil {
+		err = dis_operations.Dis_Download([]string{fileId, downloadDir, remotePath}, false)
+		if err != nil {
+			return nil, fmt.Errorf("UNIC: Open: Dis_Download 실패: fileId=%s, error=%v", fileId, err)
+		}
 	}
 
 	// Dis_Download 결과 만들어진 파일 open
