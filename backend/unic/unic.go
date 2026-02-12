@@ -523,6 +523,8 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 		}
 
 		// node가 dir일 경우 entrytable에서 삭제
+		// node가 file일 경우는 어차피 rm -rf 명령어로 재귀적으로 삭제되면서
+		// 해당 file에 대한 Remove() method가 실행됨
 		if node.Type == "dir" {
 			fmt.Printf("UNIC: Rmdir: removeNodeFromTable method Start, node.Path: %s\n", node.Path)
 			removeNodeFromTable(node.Path)
