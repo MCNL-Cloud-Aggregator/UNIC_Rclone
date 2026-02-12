@@ -464,7 +464,7 @@ func generateHash(remotePath string) string {
 func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 	fmt.Println("UNIC: Mkdir: Mkdir method Start")
 
-	// entrytable open
+	// open entrytable
 	entryTable, err := os.OpenFile(entrytable_path, os.O_WRONLY|os.O_APPEND, 0755)
 	if err != nil {
 		return err
@@ -482,7 +482,7 @@ func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 	node.Size = 0
 	node.Type = "dir"
 
-	// entrytable write
+	// update entrytable
 	encoder := json.NewEncoder(entryTable)
 	if err := encoder.Encode(node); err != nil {
 		return err
@@ -491,7 +491,94 @@ func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 	return nil
 }
 
-func (f *Fs) Rmdir(ctx context.Context, dir string) error { return nil }
+func (f *Fs) Rmdir(ctx context.Context, dir string) error {
+	fmt.Println("UNIC: Rmdir: Rmdir method Start")
+	fmt.Printf("UNIC: Rmdir: dir: %s", dir)
+
+	// open entrytable
+	entryTable, err := os.OpenFile(entrytable_path, os.O_RDWR|os.O_APPEND, 0755)
+	if err != nil {
+		return err
+	}
+	defer entryTable.Close()
+
+	// entrytable decoder/encoder 생성
+	decoder := json.NewDecoder(entryTable)
+	//encoder := json.NewEncoder(entryTable)
+
+	// update entrytable
+	for {
+		// entrytable에서 node 하나씩 가져옴
+		var node NodeEntry
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		// node가 dir의 하위 디렉토리인지 확인
+		if !isUnderDir(node.Path, dir) {
+			continue
+		}
+
+		// node가 dir일 경우 entrytable에서 삭제
+		if node.Type == "dir" {
+			fmt.Printf("UNIC: Rmdir: removeNodeFromTable method Start, node.Path: %s\n", node.Path)
+			removeNodeFromTable(node.Path)
+		} else if node.Type == "file" { // node가 file일 경우 해당 파일에 대한 unlink system call 호출
+			fmt.Println("test")
+		} else {
+			return fmt.Errorf("entrytable.jsonl type error\n")
+		}
+	}
+
+	return nil
+}
+
+func removeNodeFromTable(targetNode string) error {
+	// 원본 파일 열기
+	oldFile, err := os.OpenFile(entrytable_path, os.O_WRONLY, 0755)
+	if err != nil {
+		return err
+	}
+	defer oldFile.Close()
+
+	// 임시 파일 생성
+	tempPath := entrytable_path + ".tmp"
+	newFile, err := os.Create(tempPath)
+	if err != nil {
+		return err
+	}
+	defer newFile.Close()
+
+	decoder := json.NewDecoder(oldFile)
+	encoder := json.NewEncoder(newFile)
+
+	// 한 줄씩 읽으면서 필터링
+	for {
+		var node NodeEntry
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		// 삭제 대상(Path가 일치하는 노드)이 아니면 새 파일에 씀
+		if node.Path != targetNode {
+			if err := encoder.Encode(node); err != nil {
+				return err
+			}
+		}
+	}
+
+	// 파일 교체 (Atomic Rename)
+	oldFile.Close()
+	newFile.Close()
+
+	return os.Rename(tempPath, entrytable_path)
+}
 
 func (f *Fs) Name() string           { return f.name }
 func (f *Fs) Root() string           { return f.root }
@@ -662,6 +749,7 @@ func (o *Object) Remove(ctx context.Context) error {
 	// dis_rm 수행
 	fmt.Println("UNIC: Remove: Remove dis_rm start")
 	fileId := o.id
+	fmt.Printf("UNIC: Remove: Remove fileId: %s\n", fileId)
 	err := dis_operations.Dis_rm([]string{fileId}, false)
 	if err != nil {
 		return err
