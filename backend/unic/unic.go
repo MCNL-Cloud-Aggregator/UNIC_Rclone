@@ -453,6 +453,36 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}, nil
 }
 
+// UNIC을 마운팅한 mount point에 write system call이 들어올 때 실행
+func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...fs.OpenOption) (fs.Object, error) {
+	fmt.Println("UNIC: Put_: Put_ method Start")
+
+	// src가 실존하는 파일인지 확인
+	if _, err := os.Stat(src.Name()); err != nil {
+		fmt.Printf("UNIC: Put_: File do not exist error: %s\n", err)
+	}
+
+	// Call Dis_Upload
+	fmt.Println("UNIC: Put_: dis_upload start")
+	fmt.Printf("UNIC: Put_: remote: %s\n", remote)
+
+	fileID := generateHash((remote))
+	err := dis_operations.Dis_Upload([]string{src.Name(), remote, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
+	if err != nil {
+		return nil, fmt.Errorf("UNIC: Put_: Dis_Upload failed: %w", err)
+	}
+	fmt.Println("UNIC: Put_: Put_ Success")
+
+	// Return the object
+	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
+	return &Object{
+		//fs:      f,
+		//remote:  src.Name(),
+		//size:    src,
+		//modTime: src.ModTime(ctx),
+	}, nil
+}
+
 func generateHash(remotePath string) string {
 	backendRemoteHash := sha256.Sum256([]byte(remotePath))
 	fileID := hex.EncodeToString(backendRemoteHash[:])

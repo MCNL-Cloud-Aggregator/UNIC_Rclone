@@ -37,12 +37,15 @@ var (
 )
 
 func newUnicFileHandle(d *Dir, f *File, flags int) (*UnicFileHandle, error) {
+	fmt.Println("unichandle: newUnicFileHandle: start")
+	lPath, _ := f.Fs().(*unic.Fs).MakeOSDownloadPath(f.Path())
+
 	fh := &UnicFileHandle{
-		//remote:    f.o.Remote(),
-		flags: flags,
-		file:  f,
-		//localPath: lPath,
-		isDirty: !f.exists(),
+		remote:    f.Path(),
+		flags:     flags,
+		file:      f,
+		localPath: lPath,
+    isDirty: !f.exists()
 	}
 
 	fh.cond = sync.Cond{L: &fh.mu}
@@ -51,6 +54,7 @@ func newUnicFileHandle(d *Dir, f *File, flags int) (*UnicFileHandle, error) {
 }
 
 func (f *File) openUnic(flags int) (fh *UnicFileHandle, err error) {
+	fmt.Println("unichandle: openUnic: start")
 	f.mu.RLock()
 	d := f.d
 	f.mu.RUnlock()
@@ -77,6 +81,7 @@ func (fh *UnicFileHandle) safeToTruncate() bool {
 //
 // call with the lock held
 func (fh *UnicFileHandle) openPending() (err error) {
+	fmt.Println("unichandle: openPending: start")
 	if fh.opened {
 		return nil
 	}
@@ -106,6 +111,7 @@ func (fh *UnicFileHandle) openPending() (err error) {
 
 // String converts it to printable
 func (fh *UnicFileHandle) String() string {
+	fmt.Println("unichandle: String: start")
 	if fh == nil {
 		return "<nil *UnicWriteFileHandle>"
 	}
@@ -119,6 +125,7 @@ func (fh *UnicFileHandle) String() string {
 
 // Node returns the Node associated with this - satisfies Noder interface
 func (fh *UnicFileHandle) Node() Node {
+	fmt.Println("unichandle: Node: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 	return fh.file
@@ -137,6 +144,7 @@ func (fh *UnicFileHandle) Node() Node {
 //
 // Implementations must not retain p.
 func (fh *UnicFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
+	fmt.Println("unichandle: WriteAt: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 	return fh.writeAt(p, off)
@@ -144,8 +152,10 @@ func (fh *UnicFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
 
 // Implementation of WriteAt - call with lock held
 func (fh *UnicFileHandle) writeAt(p []byte, off int64) (n int, err error) {
-	fh.mu.Lock()
-	defer fh.mu.Unlock()
+	fmt.Println("unichandle: writeAt: start")
+	// Deadlock 발생 지점
+	//fh.mu.Lock()
+	//defer fh.mu.Unlock()
 
 	if fh.closed {
 		return 0, ECLOSED
@@ -185,6 +195,7 @@ func (fh *UnicFileHandle) writeAt(p []byte, off int64) (n int, err error) {
 //
 // Implementations must not retain p.
 func (fh *UnicFileHandle) Write(p []byte) (n int, err error) {
+	fmt.Println("unichandle: Write: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 	// Since we can't seek, just call WriteAt with the current offset
@@ -193,11 +204,13 @@ func (fh *UnicFileHandle) Write(p []byte) (n int, err error) {
 
 // WriteString a string to the file
 func (fh *UnicFileHandle) WriteString(s string) (n int, err error) {
+	fmt.Println("unichandle: WriteString: start")
 	return fh.Write([]byte(s))
 }
 
 // Offset returns the offset of the file pointer
 func (fh *UnicFileHandle) Offset() (offset int64) {
+	fmt.Println("unichandle: Offset: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 	return fh.offset
@@ -208,6 +221,7 @@ func (fh *UnicFileHandle) Offset() (offset int64) {
 //
 // Must be called with fh.mu held
 func (fh *UnicFileHandle) close() (err error) {
+	fmt.Println("unichandle: close: start")
 	if fh.closed {
 		return ECLOSED
 	}
@@ -230,18 +244,21 @@ func (fh *UnicFileHandle) close() (err error) {
 
 	if fh.isDirty {
 		fs.Debugf(fh.remote, "Fixes on file Detected")
-
+    
 		if fh.flags&os.O_CREATE != 0 {
-			//put
+			newObj, uploadErr := fh.file.Fs().(*unic.Fs).Put_(context.TODO(), fh.localFile, fh.remote) //fh.d.vfs.Fs().Put(context.Background(), fh.localPath, fh.o, nil)
+		  if uploadErr != nil {
+			  fs.Errorf(fh.remote, "upload failed: %v", uploadErr)
+			  return uploadErr
+		  }
 		} else {
 			//update
 		}
+		
 
 		// 5. 성공 시 VFS의 객체 정보 업데이트
-		/*fh.file.setObject(newObj)
-		fh.isDirty = false*/
-		//fs.Debugf(fh.remote, "업로드 완료 및 객체 업데이트 성공")
-
+		fh.file.setObject(newObj)
+		fh.isDirty = false
 	}
 
 	return nil
@@ -249,6 +266,7 @@ func (fh *UnicFileHandle) close() (err error) {
 
 // Close closes the file
 func (fh *UnicFileHandle) Close() error {
+	fmt.Println("unichandle: Close: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 	return fh.close()
@@ -270,6 +288,7 @@ func (fh *UnicFileHandle) Close() error {
 // Filesystems shouldn't assume that flush will always be called after
 // some writes, or that if will be called at all.
 func (fh *UnicFileHandle) Flush() error {
+	fmt.Println("unichandle: Flush: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 	if fh.closed {
@@ -293,6 +312,7 @@ func (fh *UnicFileHandle) Flush() error {
 // It isn't called directly from userspace so the error is ignored by
 // the kernel
 func (fh *UnicFileHandle) Release() error {
+	fmt.Println("unichandle: Release: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 	if fh.closed {
@@ -311,6 +331,7 @@ func (fh *UnicFileHandle) Release() error {
 
 // Stat returns info about the file
 func (fh *UnicFileHandle) Stat() (os.FileInfo, error) {
+	fmt.Println("unichandle: Stat: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 	return fh.file, nil
@@ -318,10 +339,15 @@ func (fh *UnicFileHandle) Stat() (os.FileInfo, error) {
 
 // Truncate file to given size
 func (fh *UnicFileHandle) Truncate(size int64) (err error) {
+	fmt.Println("unichandle: Truncate: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 
-	fs.Debugf(fh.remote, "UnicWriteFileHandle: Truncate to size %d", size)
+	if err = fh.openPending(); err != nil {
+		return err
+	}
+
+	fmt.Printf("unichandle: Truncate: size: %d\n", size)
 
 	// 1. 로컬 파일 포인터가 있는지 확인
 	if fh.localFile == nil {
@@ -347,6 +373,7 @@ func (fh *UnicFileHandle) Truncate(size int64) (err error) {
 }
 
 func (fh *UnicFileHandle) Seek(offset int64, whence int) (int64, error) {
+	fmt.Println("unichandle: Seek: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 
@@ -377,6 +404,7 @@ func (fh *UnicFileHandle) Seek(offset int64, whence int) (int64, error) {
 
 // Read reads up to len(p) bytes into p.
 func (fh *UnicFileHandle) Read(p []byte) (n int, err error) {
+	fmt.Println("unichandle: Read: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 	n, err = fh.readAt(p, fh.offset)
@@ -388,12 +416,14 @@ func (fh *UnicFileHandle) Read(p []byte) (n int, err error) {
 // underlying input source. It returns the number of bytes read (0 <=
 // n <= len(p)) and any error encountered.
 func (fh *UnicFileHandle) ReadAt(p []byte, off int64) (n int, err error) {
+	fmt.Println("unichandle: ReadAt: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 	return fh.readAt(p, off)
 }
 
 func (fh *UnicFileHandle) readAt(p []byte, off int64) (n int, err error) {
+	fmt.Println("unichandle: readAt: start")
 	if err := fh.openPending(); err != nil {
 		return 0, err
 	}
@@ -406,6 +436,7 @@ func (fh *UnicFileHandle) readAt(p []byte, off int64) (n int, err error) {
 }
 
 func (fh *UnicFileHandle) readOnly() bool {
+	fmt.Println("unichandle: readOnly: start")
 	return (fh.flags & accessModeMask) == os.O_RDONLY
 }
 
@@ -413,6 +444,7 @@ func (fh *UnicFileHandle) readOnly() bool {
 // this means flushing the file system's in-memory copy of recently written
 // data to disk.
 func (fh *UnicFileHandle) Sync() error {
+	fmt.Println("unichandle: Sync: start")
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 	if fh.closed {
@@ -429,5 +461,6 @@ func (fh *UnicFileHandle) Sync() error {
 
 // Name returns the name of the file from the underlying Object.
 func (fh *UnicFileHandle) Name() string {
+	fmt.Println("unichandle: Name: start")
 	return fh.file.String()
 }
