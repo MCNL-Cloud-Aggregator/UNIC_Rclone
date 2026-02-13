@@ -672,12 +672,14 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	// Download 폴더 생성 : home/rclone/Download/userId/remotename/remotepath
 	fmt.Println("UNIC: Open: Download 폴더 생성")
 	remotePath := o.Remote()
+	fmt.Println("UNIC: check1")
 	downloadPath, err := o.fs.MakeOSDownloadPath(remotePath)
 	if err != nil {
 		return nil, err
 	}
-
+	fmt.Println("UNIC: check2")
 	downloadDir := filepath.Dir(downloadPath)
+	fmt.Println("UNIC: check3")
 	err = os.MkdirAll(downloadDir, 0755)
 	if err != nil {
 		return nil, err
