@@ -603,6 +603,9 @@ func EditRemote(ctx context.Context, ri *fs.RegInfo, name string) error {
 var PreDeleteRemote func(name string) error
 
 // DeleteRemote gets the user to delete a remote
+var PreDeleteRemote func(name string) error
+
+// DeleteRemote gets the user to delete a remote
 func DeleteRemote(name string) {
 	if PreDeleteRemote != nil {
 		fmt.Printf("DEBUG: PreDeleteRemote called for %s\n", name) // Verification log
