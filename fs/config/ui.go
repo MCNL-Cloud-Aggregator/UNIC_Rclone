@@ -600,7 +600,7 @@ func EditRemote(ctx context.Context, ri *fs.RegInfo, name string) error {
 	return nil
 }
 
-var PreDeleteRemote func(name string) error
+//var PreDeleteRemote func(name string) error
 
 // DeleteRemote gets the user to delete a remote
 var PreDeleteRemote func(name string) error
