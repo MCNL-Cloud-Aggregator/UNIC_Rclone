@@ -243,9 +243,6 @@ func (fh *UnicFileHandle) close() (err error) {
 
 	if fh.localFile != nil {
 		_ = fh.localFile.Sync() // 디스크 동기화 강제 실행
-		if closeErr := fh.localFile.Close(); closeErr != nil {
-			fs.Errorf(fh.remote, "File Closing Failed: %v", closeErr)
-		}
 	}
 
 	if fh.isDirty {
@@ -264,7 +261,13 @@ func (fh *UnicFileHandle) close() (err error) {
 
 		// 5. 성공 시 VFS의 객체 정보 업데이트
 		fh.file.setObject(newObj)
+		fh.file.setSize(newObj.Size())
+		fmt.Printf("unichandle: close: file size: %d\n", fh.file.Size())
 		fh.isDirty = false
+	}
+
+	if closeErr := fh.localFile.Close(); closeErr != nil {
+		fs.Errorf(fh.remote, "File Closing Failed: %v", closeErr)
 	}
 
 	return nil

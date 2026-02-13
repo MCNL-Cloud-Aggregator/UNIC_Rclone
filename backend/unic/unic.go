@@ -457,6 +457,12 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...fs.OpenOption) (fs.Object, error) {
 	fmt.Println("UNIC: Put_: Put_ method Start")
 
+	// src 파일 핸들로부터 파일 정보(FileInfo) 가져오기
+	info, err := src.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("UNIC: Put_: failed to get file info: %w", err)
+	}
+
 	// src가 실존하는 파일인지 확인
 	if _, err := os.Stat(src.Name()); err != nil {
 		fmt.Printf("UNIC: Put_: File do not exist error: %s\n", err)
@@ -467,7 +473,7 @@ func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...f
 	fmt.Printf("UNIC: Put_: remote: %s\n", remote)
 
 	fileID := generateHash((remote))
-	err := dis_operations.Dis_Upload([]string{src.Name(), remote, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
+	err = dis_operations.Dis_Upload([]string{src.Name(), remote, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
 		return nil, fmt.Errorf("UNIC: Put_: Dis_Upload failed: %w", err)
 	}
@@ -476,10 +482,10 @@ func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...f
 	// Return the object
 	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
 	return &Object{
-		//fs:      f,
-		//remote:  src.Name(),
-		//size:    src,
-		//modTime: src.ModTime(ctx),
+		fs:      f,
+		remote:  remote,
+		size:    info.Size(),
+		modTime: info.ModTime(),
 	}, nil
 }
 
