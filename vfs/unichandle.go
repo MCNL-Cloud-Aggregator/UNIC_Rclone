@@ -7,7 +7,6 @@ import (
 	"os"
 	"sync"
 
-	"github.com/rclone/rclone/backend/unic"
 	"github.com/rclone/rclone/fs"
 )
 
@@ -46,7 +45,9 @@ func newUnicFileHandle(d *Dir, f *File, flags int) (*UnicFileHandle, error) {
 		flags:     flags,
 		file:      f,
 		localPath: lPath,
+    isDirty: !f.exists()
 	}
+
 	fh.cond = sync.Cond{L: &fh.mu}
 	fh.file.addWriter(fh)
 	return fh, nil
@@ -243,18 +244,21 @@ func (fh *UnicFileHandle) close() (err error) {
 
 	if fh.isDirty {
 		fs.Debugf(fh.remote, "Fixes on file Detected")
-
-		newObj, uploadErr := fh.file.Fs().(*unic.Fs).Put_(context.TODO(), fh.localFile, fh.remote) //fh.d.vfs.Fs().Put(context.Background(), fh.localPath, fh.o, nil)
-		//newObj, uploadErr := fh.file.Fs().(*unic.Fs).Put(context.TODO(), fh.localFile, oi)         //fh.d.vfs.Fs().Put(context.Background(), fh.localPath, fh.o, nil)
-		if uploadErr != nil {
-			fs.Errorf(fh.remote, "upload failed: %v", uploadErr)
-			return uploadErr
+    
+		if fh.flags&os.O_CREATE != 0 {
+			newObj, uploadErr := fh.file.Fs().(*unic.Fs).Put_(context.TODO(), fh.localFile, fh.remote) //fh.d.vfs.Fs().Put(context.Background(), fh.localPath, fh.o, nil)
+		  if uploadErr != nil {
+			  fs.Errorf(fh.remote, "upload failed: %v", uploadErr)
+			  return uploadErr
+		  }
+		} else {
+			//update
 		}
+		
 
 		// 5. 성공 시 VFS의 객체 정보 업데이트
 		fh.file.setObject(newObj)
 		fh.isDirty = false
-		//fs.Debugf(fh.remote, "업로드 완료 및 객체 업데이트 성공")
 	}
 
 	return nil
