@@ -86,12 +86,14 @@ func (fh *UnicFileHandle) openPending() (err error) {
 	if fh.opened {
 		return nil
 	}
-
+	fh.o = fh.file.getObject()
 	// 1. 기존 파일 다운로드 트리거
 	// 단, 파일을 새로 쓰거나(O_TRUNC), 새로 만드는(O_CREATE) 모드이면서
 	// 기존 내용을 무시해도 되는 상황이라면 다운로드를 건너뛸 수 있습니다.
 	// 여기서는 안전하게 'Truncate' 플래그가 없을 때만 다운로드하도록 구성해볼 수 있습니다.
+	//fmt.Print("check: %d, %d \n", fh.o != nil, (fh.flags&os.O_TRUNC == 0))
 	if fh.o != nil && (fh.flags&os.O_TRUNC == 0) {
+		fmt.Print("check if disdownload\n")
 		rc, err := fh.o.Open(context.TODO())
 		if err != nil {
 			return fmt.Errorf("unic: openPending download failed: %w", err)
@@ -99,9 +101,12 @@ func (fh *UnicFileHandle) openPending() (err error) {
 		_ = rc.Close()
 	}
 
+	fmt.Print("check if disdownload completed\n")
 	// 2. 실제 사용할 로컬 파일 오픈
 	// 사용자가 요청한 flags(RDONLY, WRONLY, RDWR, APPEND, TRUNC 등)가 그대로 적용됩니다.
 	fh.localFile, err = os.OpenFile(fh.localPath, fh.flags, 0644)
+	fmt.Print("check file local path:")
+	fmt.Println(fh.localPath)
 	if err != nil {
 		return fmt.Errorf("unic: failed to final open with flags(%d): %w", fh.flags, err)
 	}
@@ -433,6 +438,7 @@ func (fh *UnicFileHandle) readAt(p []byte, off int64) (n int, err error) {
 		return 0, ECLOSED
 	}
 
+	fmt.Println("Check readAt")
 	return fh.localFile.ReadAt(p, off)
 }
 
