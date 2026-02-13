@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -252,6 +253,175 @@ func removeFileByName(files []FileInfo, fileName string) []FileInfo {
 		}
 	}
 	return updatedFiles
+}
+
+// DeleteRemote: 리모트 삭제 후, 복구가 필요한 파일은 즉시 재업로드까지 수행
+func DeleteDatamap(remoteName string) error {
+
+	// 1. 데이터맵 읽기
+	filesMap, err := readJsonFile()
+	if err != nil {
+		return fmt.Errorf("failed to read datamap: %w", err)
+	}
+
+	// 2. 처리 대상 분류
+	var unsafeFiles []string // 복구 불가능 -> 다운로드 -> 삭제 -> [재업로드]
+	var safeFiles []string   // 복구 가능 -> 메타데이터만 수정
+
+	for fileName, fileInfo := range filesMap {
+		// 해당 리모트를 사용하는지 확인
+		usesRemote := false
+		for _, shard := range fileInfo.DistributedFileInfos {
+			if shard.Remote.Name == remoteName {
+				usesRemote = true
+				break
+			}
+		}
+		if !usesRemote {
+			continue
+		}
+
+		// Reed-Solomon 가능 여부 계산
+		removable := calculateRemovableClouds(fileInfo.Shard, fileInfo.Parity, len(fileInfo.RemoteList))
+
+		if removable >= 1 {
+			// [Case 1: Safe] 현재 리모트를 지워도 RS 복구 가능 -> 메타데이터만 수정
+			safeFiles = append(safeFiles, fileName)
+		} else {
+			// [Case 2: Unsafe] 현재 리모트를 지우면 데이터 손실 -> 재업로드 필수
+			unsafeFiles = append(unsafeFiles, fileName)
+		}
+	}
+
+	fmt.Printf("[DeleteRemote] Analyzing Remote '%s'...\n", remoteName)
+	fmt.Printf(" - Metadata Update Only (Safe): %d files\n", len(safeFiles))
+	fmt.Printf(" - Full Migration Needed (Unsafe): %d files\n", len(unsafeFiles))
+
+	// ---------------------------------------------------------
+	// [Step 1] Unsafe Files 처리 (다운로드 -> 삭제 -> 재업로드)
+	// ---------------------------------------------------------
+	if len(unsafeFiles) > 0 {
+		tempDir := filepath.Join(os.TempDir(), "unic_migration")
+		if err := os.MkdirAll(tempDir, 0755); err != nil {
+			return fmt.Errorf("failed to create temp dir: %w", err)
+		}
+
+		for _, fileName := range unsafeFiles {
+			fmt.Printf("[Migration] Processing unsafe file: %s\n", fileName)
+
+			// 1. 다운로드 (복구)
+			// 로컬 임시 폴더로 파일 복원
+			if err := Dis_Download([]string{fileName, tempDir}, false); err != nil {
+				fmt.Printf("   [Error] Download failed for %s. Skipping migration: %v\n", fileName, err)
+				continue
+			}
+
+			// 2. 메타데이터 및 클라우드 파편 삭제 (Dis_rm)
+			// 기존 정보를 지워야 새로운 설정으로 깨끗하게 업로드 가능
+			if err := Dis_rm([]string{fileName}, false); err != nil {
+				return fmt.Errorf("failed Dis_rm for %s: %w", fileName, err)
+			}
+
+			// 3. ★ 재업로드 수행 (Dis_Upload 호출) ★
+			fullPath := filepath.Join(tempDir, fileName)
+			fmt.Printf("   -> Re-uploading %s to redistribute shards...\n", fileName)
+
+			// Dis_Upload 함수 호출 (인자는 구현된 형태에 맞게 조정 필요)
+			// 여기서는 []string{filePath} 형태라고 가정합니다.
+			allRemotes := config.GetRemotes()
+			var validRemotes []config.Remote
+			for _, r := range allRemotes {
+				if r.Name != remoteName {
+					validRemotes = append(validRemotes, r)
+				}
+			}
+			newTargets := UploadTargets{
+				Remotes:   validRemotes,
+				UseConfig: false,
+			}
+
+			if err := Dis_Upload([]string{fullPath}, newTargets, false, RoundRobinFromSelectedRemotes); err != nil {
+				fmt.Printf("   [Error] Upload failed for %s: %v\n", fileName, err)
+				// 실패 시 로컬 파일은 남겨둘지, 지울지 결정 필요 (여기선 안전을 위해 보존하거나 로그 남김)
+			} else {
+				// 4. 성공 시 임시 파일 삭제 (Cleanup)
+				if err := os.Remove(fullPath); err != nil {
+					fmt.Printf("   [Warning] Failed to delete temp file %s: %v\n", fullPath, err)
+				}
+				fmt.Printf("   -> Migration completed for %s\n", fileName)
+			}
+		}
+	}
+
+	// ---------------------------------------------------------
+	// [Step 2] Safe Files 처리 (메타데이터 직접 수정)
+	// ---------------------------------------------------------
+	if len(safeFiles) > 0 {
+		// Step 1 진행 중 datamap.json이 변경되었을 수 있으므로 다시 로드
+		if len(unsafeFiles) > 0 {
+			filesMap, err = readJsonFile()
+			if err != nil {
+				return fmt.Errorf("failed to reload datamap: %w", err)
+			}
+		}
+
+		dirty := false
+		for _, fileName := range safeFiles {
+			fileInfo, exists := filesMap[fileName]
+			if !exists {
+				continue
+			}
+
+			// 2-1. DistributedFileInfos에서 해당 리모트 파편 제거
+			for key, dFile := range fileInfo.DistributedFileInfos {
+				if dFile.Remote.Name == remoteName {
+					delete(fileInfo.DistributedFileInfos, key)
+				}
+			}
+
+			// 2-2. RemoteList 갱신
+			newRemoteList := []string{}
+			for _, rName := range fileInfo.RemoteList {
+				if rName != remoteName {
+					newRemoteList = append(newRemoteList, rName)
+				}
+			}
+			fileInfo.RemoteList = newRemoteList
+
+			filesMap[fileName] = fileInfo
+			dirty = true
+			fmt.Printf("[Update] Metadata updated for '%s' (Remote removed, File remains safe)\n", fileName)
+		}
+
+		// 변경 사항 저장
+		if dirty {
+			if err := writeJsonFile(getJsonFilePath(), filesMap); err != nil {
+				return fmt.Errorf("failed to save updated datamap: %w", err)
+			}
+		}
+	}
+
+	fmt.Println("\nRemote deletion and migration completed successfully.")
+	return nil
+}
+
+func calculateRemovableClouds(shard int, parity int, totalClouds int) int {
+	if totalClouds == 0 {
+		return 0
+	}
+
+	// 1. (shard 수 / 전체 클라우드 수) -> 소수점 올림
+	// Shards per cloud (Load)
+	shardsPerCloud := math.Ceil(float64(shard) / float64(totalClouds))
+
+	if shardsPerCloud == 0 {
+		return 0
+	}
+
+	// 2. (parity 수) / 위 결과 -> 소수점 내림
+	removable := math.Floor(float64(parity) / shardsPerCloud)
+	fmt.Printf("removable: %d\n", int(removable))
+	return int(removable)
 }
 
 // checking to see if it terminated abnormally and if so, returning what command is was previously
