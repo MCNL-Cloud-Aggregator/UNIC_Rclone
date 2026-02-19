@@ -54,6 +54,29 @@ func newUnicFileHandle(d *Dir, f *File, flags int) (*UnicFileHandle, error) {
 	return fh, nil
 }
 
+// removeUnic handles file deletion for unic backend
+func (f *File) removeUnic() error {
+	fmt.Println("unichandle: removeUnic: start")
+
+	// local cache 삭제
+	if fsObj, ok := f.Fs().(*unic.Fs); ok {
+		localPath, _ := fsObj.MakeOSDownloadPath(f.Path())
+		fmt.Printf("unichandle: removeUnic: localPath: %s\n", localPath)
+		err := os.Remove(localPath)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.o != nil {
+		return f.o.Remove(context.TODO())
+	}
+	return nil
+}
+
 func (f *File) openUnic(flags int) (fh *UnicFileHandle, err error) {
 	fmt.Println("unichandle: openUnic: start")
 	f.mu.RLock()

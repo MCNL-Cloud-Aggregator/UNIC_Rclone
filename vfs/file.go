@@ -664,6 +664,12 @@ func (f *File) Sync() error {
 // Remove the file
 func (f *File) Remove() (err error) {
 	defer log.Trace(f.Path(), "")("err=%v", &err)
+
+	if _, ok := f.Fs().(*unic.Fs); ok {
+		// unic.Fs 타입이 맞을 때 실행될 로직
+		return f.removeUnic()
+	}
+
 	f.mu.RLock()
 	d := f.d
 	f.mu.RUnlock()
