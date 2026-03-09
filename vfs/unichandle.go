@@ -272,20 +272,19 @@ func (fh *UnicFileHandle) close() (err error) {
 		fs.Debugf(fh.remote, "Fixes on file Detected")
 		var newObj fs.Object
 		var uploadErr error
-		if fh.flags&os.O_CREATE != 0 {
-			newObj, uploadErr = fh.file.Fs().(*unic.Fs).Put_(context.TODO(), fh.localFile, fh.remote) //fh.d.vfs.Fs().Put(context.Background(), fh.localPath, fh.o, nil)
-			if uploadErr != nil {
-				fs.Errorf(fh.remote, "upload failed: %v", uploadErr)
-				return uploadErr
-			}
-		} else {
-			//update
+
+		newObj, uploadErr = fh.file.Fs().(*unic.Fs).Put_(context.TODO(), fh.localFile, fh.remote)
+		if uploadErr != nil {
+			fs.Errorf(fh.remote, "upload failed: %v", uploadErr)
+			return uploadErr
 		}
 
 		// 5. 성공 시 VFS의 객체 정보 업데이트
-		fh.file.setObject(newObj)
-		fh.file.setSize(newObj.Size())
-		fmt.Printf("unichandle: close: file size: %d\n", fh.file.Size())
+		if newObj != nil {
+			fh.file.setObject(newObj)
+			fh.file.setSize(newObj.Size())
+			fmt.Printf("unichandle: close: file size: %d\n", fh.file.Size())
+		}
 		fh.isDirty = false
 	}
 

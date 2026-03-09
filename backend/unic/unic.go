@@ -718,64 +718,64 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 }
 
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
-	// dis_rm 수행하여 기존의 파일 삭제
-	fs.Debugf(o, "----------Update method start----------")
+	//// dis_rm 수행하여 기존의 파일 삭제
+	//fs.Debugf(o, "----------Update method start----------")
 
-	// dis_rm 수행
-	fs.Debugf(o, "----------dis_operations.Dis_rm start----------")
-	err := dis_operations.Dis_rm([]string{o.remote}, false)
-	if err != nil {
-		return err
-	}
-	fs.Debugf(o, "----------dis_operations.Dis_rm end----------")
+	//// dis_rm 수행
+	//fs.Debugf(o, "----------dis_operations.Dis_rm start----------")
+	//err := dis_operations.Dis_rm([]string{o.remote}, false)
+	//if err != nil {
+	//	return err
+	//}
+	//fs.Debugf(o, "----------dis_operations.Dis_rm end----------")
 
-	// dis_upload 수행하여 새로운 파일 업로드
-	// Create a temporary directory
-	fs.Debugf(o, "----------Create a temporary directory start--------------")
-	tempDir, err := os.MkdirTemp("", "unic_upload")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tempDir) // Clean up
-	fs.Debugf(o, "----------Create a temporary directory end--------------")
+	//// dis_upload 수행하여 새로운 파일 업로드
+	//// Create a temporary directory
+	//fs.Debugf(o, "----------Create a temporary directory start--------------")
+	//tempDir, err := os.MkdirTemp("", "unic_upload")
+	//if err != nil {
+	//	return err
+	//}
+	//defer os.RemoveAll(tempDir) // Clean up
+	//fs.Debugf(o, "----------Create a temporary directory end--------------")
 
-	// Create the file with the correct name
-	fs.Debugf(o, "----------Create a temporary file start--------------")
-	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
-	fs.Debugf(o, "src.Remote(): %s", src.Remote())
-	fs.Debugf(o, "tempFilePath: %s", tempFilePath)
-	tempFile, err := os.Create(tempFilePath)
-	if err != nil {
-		return err
-	}
-	fs.Debugf(o, "----------Create a temporary file end--------------")
+	//// Create the file with the correct name
+	//fs.Debugf(o, "----------Create a temporary file start--------------")
+	//tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
+	//fs.Debugf(o, "src.Remote(): %s", src.Remote())
+	//fs.Debugf(o, "tempFilePath: %s", tempFilePath)
+	//tempFile, err := os.Create(tempFilePath)
+	//if err != nil {
+	//	return err
+	//}
+	//fs.Debugf(o, "----------Create a temporary file end--------------")
 
-	// Copy content
-	fs.Debugf(o, "----------Copy content to temp file start--------------")
-	_, err = io.Copy(tempFile, in)
+	//// Copy content
+	//fs.Debugf(o, "----------Copy content to temp file start--------------")
+	//_, err = io.Copy(tempFile, in)
 
-	tempFile.Sync()
-	closeErr := tempFile.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	fs.Debugf(o, "----------Copy content to temp file end--------------")
+	//tempFile.Sync()
+	//closeErr := tempFile.Close()
+	//if err != nil {
+	//	return err
+	//}
+	//if closeErr != nil {
+	//	return closeErr
+	//}
+	//fs.Debugf(o, "----------Copy content to temp file end--------------")
 
-	// Call Dis_Upload
-	// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
-	fs.Debugf(o, "----------dis_upload start--------------")
-	fs.Debugf(o, "tempFilePath: %s, remotes: %s", tempFilePath, o.fs.getUpstreamRemotes())
-	fileId := o.id
-	remotePath := o.remote
-	err = dis_operations.Dis_Upload([]string{tempFilePath, fileId, remotePath}, dis_operations.UploadTargets{Remotes: o.fs.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
-	if err != nil {
-		return err
-	}
-	fs.Debugf(o, "----------dis_upload end--------------")
-	fs.Debugf(o, "----------Update method end--------------")
+	//// Call Dis_Upload
+	//// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
+	//fs.Debugf(o, "----------dis_upload start--------------")
+	//fs.Debugf(o, "tempFilePath: %s, remotes: %s", tempFilePath, o.fs.getUpstreamRemotes())
+	//fileId := o.id
+	//remotePath := o.remote
+	//err = dis_operations.Dis_Upload([]string{tempFilePath, fileId, remotePath}, dis_operations.UploadTargets{Remotes: o.fs.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
+	//if err != nil {
+	//	return err
+	//}
+	//fs.Debugf(o, "----------dis_upload end--------------")
+	//fs.Debugf(o, "----------Update method end--------------")
 
 	return nil
 }
