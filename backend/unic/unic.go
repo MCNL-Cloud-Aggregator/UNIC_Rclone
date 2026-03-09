@@ -699,7 +699,7 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	fi, err := os.Stat(downloadPath)
 
 	if fi == nil {
-		err = dis_operations.Dis_Download([]string{fileId, downloadDir, remotePath}, false)
+		err = dis_operations.Dis_Download([]string{fileId, downloadDir, remotePath}, false, false)
 		if err != nil {
 			return nil, fmt.Errorf("UNIC: Open: Dis_Download 실패: fileId=%s, error=%v", fileId, err)
 		}

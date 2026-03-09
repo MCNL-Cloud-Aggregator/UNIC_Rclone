@@ -318,13 +318,13 @@ func DeleteDatamap(remoteName string) error {
 				break
 			}
 		}
-		if !usesRemote {
+		if !usesRemote { // 해당 파일은 삭제하려는 원격 서비스가 없는 거임
 			continue
 		}
 		fmt.Printf("calculate 시작, %d %d %d\n", fileInfo.Shard, fileInfo.Parity, len(fileInfo.RemoteList))
 		removable := calculateRemovableClouds(fileInfo.Shard, fileInfo.Parity, len(fileInfo.RemoteList))
 		fmt.Printf("removable 값 %d", removable)
-		if removable >= 1 {
+		if removable >= 1 { // 복구가 가능하니 reedsolomon 가능 리스트에 첨가
 			safeFiles = append(safeFiles, fileId)
 		} else {
 			unsafeFiles = append(unsafeFiles, fileId)

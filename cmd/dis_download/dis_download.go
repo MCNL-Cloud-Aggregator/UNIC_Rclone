@@ -47,7 +47,7 @@ To erase the files, use the dis_rm command instead.
 				return err
 			}
 			if !sameCommand {
-				return dis_operations.Dis_Download(args, false)
+				return dis_operations.Dis_Download(args, false, false)
 			}
 			return nil
 		})
