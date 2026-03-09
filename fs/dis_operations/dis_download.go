@@ -34,7 +34,7 @@ var copyCommandDefinitionForDown = &cobra.Command{
 }
 
 // 뭐고
-func Dis_Download(args []string, reSignal bool, forceRemove bool) (err error) {
+func Dis_Download(args []string, reSignal bool) (err error) {
 
 	fileId := args[0]
 	fmt.Printf("Dis_Download fileId: %s\n", fileId)
@@ -102,7 +102,8 @@ func Dis_Download(args []string, reSignal bool, forceRemove bool) (err error) {
 	//originalFileName := filepath.Base(backendRemote)
 	err = reedsolomon.DoDecode(fileId, args[2], absolutePath, fileInfo.Padding, checksums, fileInfo.Shard, fileInfo.Parity, TryGetPassword())
 	if err != nil {
-		if forceRemove || ShowDescription_RemoveFile(fileId, err) {
+		result := ShowDescription_RemoveFile(fileId, err)
+		if result {
 			err = Dis_rm([]string{fileId}, false)
 			if err != nil {
 				return err

@@ -355,7 +355,12 @@ func DeleteDatamap(remoteName string) error {
 
 			// 1. 다운로드 (복구)
 			// Dis_Download 호출 (인자 3개: ID, 저장폴더, 리모트경로)
-			if err := Dis_Download([]string{fileId, tempDir, fileInfo.FilePath}, false, true); err != nil {
+			if err := RunWithAutoInput("y", func() error {
+				// 여기서 Dis_Download가 실행되면서 입력을 요구하면,
+				// 위에서 넣어준 "y"를 읽고 자동으로 넘어갑니다.
+				fmt.Printf("인자값: %s %s %s\n",fileId, tempDir, fileInfo.FilePath)
+				return Dis_Download([]string{fileId, tempDir, fileInfo.FilePath}, false)
+			}); err != nil {
 				fmt.Printf("   [Error] Download failed for %s. Skipping migration: %v\n", fileId, err)
 				continue
 			}

@@ -37,7 +37,7 @@ func CheckState(action string, args []string, loadbalancer LoadBalancerType) (bo
 			//redownload
 			path := AskDestination()
 			redownloadArgs := []string{origin_name, path}
-			return checkSameCommand(action, "download", args, redownloadArgs), Dis_Download(redownloadArgs, true, false)
+			return checkSameCommand(action, "download", args, redownloadArgs), Dis_Download(redownloadArgs, true)
 		} else {
 			// dump old file
 			return false, DumpDownloadState([]string{origin_name})
