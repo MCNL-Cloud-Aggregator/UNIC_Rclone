@@ -92,7 +92,7 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 			// } else {
 			// 	return nil
 			// }
-			err = Dis_rm(args, false)
+			err = Dis_rm([]string{args[2]}, false)
 			if err != nil {
 				return err
 			}
