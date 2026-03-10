@@ -105,10 +105,7 @@ func (i *NodeEntry) IsDir() bool  { return i.Type == NodeTypeDir }
 func (i *NodeEntry) IsFile() bool { return i.Type == NodeTypeFile }
 
 func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, error) {
-	//fmt.Printf("---------------------------------\nname of remote: %s\n---------------------------------\n", name)
 	name = strings.Split(name, "{")[0]
-	//------------------------------------------------------------------------------------------------------------------------
-	// Parse config into Options struct
 	opt := new(common.Options)
 	err := configstruct.Set(m, opt)
 	if err != nil {
@@ -190,8 +187,6 @@ func (f *Fs) GetUserId() string {
 	return f.opt.UserID
 }
 
-// entrytable을 읽는 코드가 이거 말고도 있음
-// 나중에 entrytable 찾는 코드를 method로 만들어서 재사용성을 높이는 방안 생각
 func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
@@ -291,7 +286,6 @@ func (f *Fs) getList(ctx context.Context, dir string, checkDir func(path, prefix
 			if err == io.EOF {
 				break
 			}
-			fmt.Println("JSON parse error:", err)
 			return nil, err
 		}
 
@@ -399,52 +393,52 @@ func (f *Fs) getUpstreamRemotes() []config.Remote {
 
 // UNIC을 마운팅한 mount point에 write system call이 들어올 때 실행
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	fmt.Println("UNIC: Put: Put method Start")
+	//fmt.Printf("%s UNIC: Put: Put method Start\n", time.Now().Format("15:04:05.000"))
 
-	// Create a temporary directory
-	fmt.Println("UNIC: Put: Create a temporary directory start")
-	tempDir, err := os.MkdirTemp("", "unic_upload")
-	if err != nil {
-		return nil, fmt.Errorf("UNIC: Put: failed to create temp dir: %w", err)
-	}
-	defer os.RemoveAll(tempDir) // Clean up tempDir
+	//// Create a temporary directory
+	////fmt.Println("UNIC: Put: Create a temporary directory start")
+	//tempDir, err := os.MkdirTemp("", "unic_upload")
+	//if err != nil {
+	//	return nil, fmt.Errorf("UNIC: Put: failed to create temp dir: %w", err)
+	//}
+	//defer os.RemoveAll(tempDir) // Clean up tempDir
 
-	// Create the file with the correct name
-	fmt.Println("UNIC: Put: Create a temporary file start")
-	tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
-	fmt.Printf("src.Remote(): %s, tempFilePath: %s\n", src.Remote(), tempFilePath)
-	tempFile, err := os.Create(tempFilePath)
-	if err != nil {
-		return nil, fmt.Errorf("UNIC: Put: failed to create temp file: %w", err)
-	}
+	//// Create the file with the correct name
+	////fmt.Println("UNIC: Put: Create a temporary file start")
+	//tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
+	////fmt.Printf("src.Remote(): %s, tempFilePath: %s\n", src.Remote(), tempFilePath)
+	//tempFile, err := os.Create(tempFilePath)
+	//if err != nil {
+	//	return nil, fmt.Errorf("UNIC: Put: failed to create temp file: %w", err)
+	//}
 
-	// Copy content
-	fmt.Println("UNIC: Put: Copy content to temp file start")
-	_, err = io.Copy(tempFile, in)
-	if err != nil {
-		return nil, fmt.Errorf("UNIC: Put: failed to write to temp file: %w", err)
-	}
+	//// Copy content
+	////fmt.Println("UNIC: Put: Copy content to temp file start")
+	//_, err = io.Copy(tempFile, in)
+	//if err != nil {
+	//	return nil, fmt.Errorf("UNIC: Put: failed to write to temp file: %w", err)
+	//}
 
-	tempFile.Sync() // 필수적인가?
-	closeErr := tempFile.Close()
-	if closeErr != nil {
-		return nil, fmt.Errorf("UNIC: Put: failed to close temp file: %w", closeErr)
-	}
+	//tempFile.Sync() // 필수적인가?
+	//closeErr := tempFile.Close()
+	//if closeErr != nil {
+	//	return nil, fmt.Errorf("UNIC: Put: failed to close temp file: %w", closeErr)
+	//}
 
-	// Call Dis_Upload
-	fmt.Println("UNIC: Put: dis_upload start")
-	fmt.Printf("tempFilePath: %s, remotes: %s\n", tempFilePath, f.getUpstreamRemotes())
+	//// Call Dis_Upload
+	////fmt.Println("UNIC: Put: dis_upload start")
+	////fmt.Printf("tempFilePath: %s, remotes: %s\n", tempFilePath, f.getUpstreamRemotes())
 
-	remotePath := src.Remote()
-	fileID := generateHash((remotePath))
-	err = dis_operations.Dis_Upload([]string{tempFilePath, remotePath, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
-	if err != nil {
-		return nil, fmt.Errorf("UNIC: Put: Dis_Upload failed: %w", err)
-	}
-	fmt.Println("UNIC: Put: Put Success")
+	//remotePath := src.Remote()
+	//fileID := generateHash((remotePath))
+	//err = dis_operations.Dis_Upload([]string{tempFilePath, remotePath, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
+	//if err != nil {
+	//	return nil, fmt.Errorf("UNIC: Put: Dis_Upload failed: %w", err)
+	//}
+	////fmt.Println("UNIC: Put: Put Success")
 
-	// Return the object
-	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
+	//// Return the object
+	//// We construct the Object based on the source info as entry table lookup might fail or be delayed.
 	return &Object{
 		fs:      f,
 		remote:  src.Remote(),
@@ -455,7 +449,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 
 // UNIC을 마운팅한 mount point에 write system call이 들어올 때 실행
 func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...fs.OpenOption) (fs.Object, error) {
-	fmt.Println("UNIC: Put_: Put_ method Start")
+	fmt.Printf("%s UNIC: Put_: Put_ method Start\n", time.Now().Format("15:04:05.000"))
 
 	// src 파일 핸들로부터 파일 정보(FileInfo) 가져오기
 	info, err := src.Stat()
@@ -468,16 +462,15 @@ func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...f
 		fmt.Printf("UNIC: Put_: File do not exist error: %s\n", err)
 	}
 
+	//fmt.Println("UNIC: Put_: dis_upload start")
+	//fmt.Printf("UNIC: Put_: remote: %s\n", remote)
 	// Call Dis_Upload
-	fmt.Println("UNIC: Put_: dis_upload start")
-	fmt.Printf("UNIC: Put_: remote: %s\n", remote)
-
-	fileID := generateHash((remote))
+	fileID := generateHash(remote)
 	err = dis_operations.Dis_Upload([]string{src.Name(), remote, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
 		return nil, fmt.Errorf("UNIC: Put_: Dis_Upload failed: %w", err)
 	}
-	fmt.Println("UNIC: Put_: Put_ Success")
+	//fmt.Println("UNIC: Put_: Put_ Success")
 
 	// Return the object
 	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
@@ -498,7 +491,7 @@ func generateHash(remotePath string) string {
 
 // UNIC을 마운팅한 mount point에 mkdir system call이 들어올 때 실행
 func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
-	fmt.Println("UNIC: Mkdir: Mkdir method Start")
+	fmt.Printf("%s UNIC: Mkdir: Mkdir method Start\n", time.Now().Format("15:04:05.000"))
 
 	// open entrytable
 	entryTable, err := os.OpenFile(entrytable_path, os.O_WRONLY|os.O_APPEND, 0755)
@@ -508,7 +501,7 @@ func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 	defer entryTable.Close()
 
 	// entrytable에 쓸 NodeEntry 정의
-	fmt.Printf("UNIC: Mkdir: dirPath: %s\n", dirPath)
+	//fmt.Printf("UNIC: Mkdir: dirPath: %s\n", dirPath)
 	var node NodeEntry // entrytable에 쓸 데이터를 저장하고 있을 변수
 
 	node.Id = generateHash(dirPath)
@@ -528,8 +521,8 @@ func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 }
 
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
-	fmt.Println("UNIC: Rmdir: Rmdir method Start")
-	fmt.Printf("UNIC: Rmdir: dir: %s", dir)
+	fmt.Printf("%s UNIC: Rmdir: Rmdir method Start\n", time.Now().Format("15:04:05.000"))
+	//fmt.Printf("UNIC: Rmdir: dir: %s", dir)
 
 	// open entrytable
 	entryTable, err := os.OpenFile(entrytable_path, os.O_RDWR|os.O_APPEND, 0755)
@@ -540,7 +533,6 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 
 	// entrytable decoder/encoder 생성
 	decoder := json.NewDecoder(entryTable)
-	//encoder := json.NewEncoder(entryTable)
 
 	// update entrytable
 	for {
@@ -562,7 +554,7 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 		// node가 file일 경우는 어차피 rm -rf 명령어로 재귀적으로 삭제되면서
 		// 해당 file에 대한 Remove() method가 실행됨
 		if node.Type == "dir" {
-			fmt.Printf("UNIC: Rmdir: removeNodeFromTable method Start, node.Path: %s\n", node.Path)
+			//fmt.Printf("UNIC: Rmdir: removeNodeFromTable method Start, node.Path: %s\n", node.Path)
 			removeNodeFromTable(node.Path)
 		} else {
 			return fmt.Errorf("entrytable.jsonl type error\n")
@@ -673,31 +665,28 @@ func (f *Fs) MakeOSDownloadPath(remotePath string) (string, error) {
 
 // UNIC을 마운팅한 mount point에 read system call이 들어올 때 실행
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
-	fmt.Println("UNIC: Open: Open method Start")
+	fmt.Printf("%s UNIC: Open: Open method Start\n", time.Now().Format("15:04:05.000"))
 
-	// Download 폴더 생성 : home/rclone/Download/userId/remotename/remotepath
-	fmt.Println("UNIC: Open: Download 폴더 생성")
+	// Download 폴더 생성 : home/rclone/Download/{userId}/{remotename}/{remotepath}
+	//fmt.Println("UNIC: Open: Download 폴더 생성")
 	remotePath := o.Remote()
-	fmt.Println("UNIC: check1")
 	downloadPath, err := o.fs.MakeOSDownloadPath(remotePath)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("UNIC: check2")
 	downloadDir := filepath.Dir(downloadPath)
-	fmt.Println("UNIC: check3")
 	err = os.MkdirAll(downloadDir, 0755)
 	if err != nil {
 		return nil, err
 	}
 
 	// Dis_Download 로직 호출
-	fmt.Println("UNIC: Open: Dis_Download start")
+	//fmt.Println("UNIC: Open: Dis_Download start")
 	fileId := o.id
-	fmt.Printf("fileId=%s, downloadDir=%s, remotePath=%s\n", fileId, downloadDir, remotePath)
+	//fmt.Printf("fileId=%s, downloadDir=%s, remotePath=%s\n", fileId, downloadDir, remotePath)
 
+	// 파일이 이미 Download 폴더에 존재한다면, Dis_Download 호출하지 않음
 	fi, err := os.Stat(downloadPath)
-
 	if fi == nil {
 		err = dis_operations.Dis_Download([]string{fileId, downloadDir, remotePath}, false)
 		if err != nil {
@@ -706,13 +695,13 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	}
 
 	// Dis_Download 결과 만들어진 파일 open
-	fmt.Println("UNIC: Open: Dis_Download 결과 만들어진 파일 open")
+	//fmt.Println("UNIC: Open: Dis_Download 결과 만들어진 파일 open")
 	f, err := os.Open(downloadPath)
 	if err != nil {
 		os.Remove(downloadPath)
 		return nil, fmt.Errorf("UNIC: Open: downloadedFilePath open 실패: fileId=%s, error=%v", fileId, err)
 	}
-	fmt.Println("UNIC: Open: Open Success")
+	//fmt.Println("UNIC: Open: Open Success")
 
 	return f, nil
 }
@@ -782,10 +771,10 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 
 // UNIC을 마운팅한 mount point에 unlink system call이 들어올 때 실행
 func (o *Object) Remove(ctx context.Context) error {
-	fmt.Println("UNIC: Remove: Remove method start")
+	fmt.Printf("%s UNIC: Remove: Remove method start\n", time.Now().Format("15:04:05.000"))
 
 	// dis_rm 수행
-	fmt.Println("UNIC: Remove: Remove dis_rm start")
+	//fmt.Println("UNIC: Remove: Remove dis_rm start")
 	fileId := o.id
 	fmt.Printf("UNIC: Remove: Remove fileId: %s\n", fileId)
 	err := dis_operations.Dis_rm([]string{fileId}, false)
@@ -793,7 +782,7 @@ func (o *Object) Remove(ctx context.Context) error {
 		return err
 	}
 
-	fmt.Println("UNIC: Remove: Remove Success")
+	//fmt.Println("UNIC: Remove: Remove Success")
 
 	return nil
 }
