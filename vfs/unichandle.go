@@ -125,6 +125,9 @@ func (fh *UnicFileHandle) openPending() (err error) {
 	}
 
 	fmt.Print("check if disdownload completed\n")
+
+	// O_APPEND 플래그가 활성화 되어있는 상황에서도 writeAt() 함수를 제대로 실행하도록 수정
+	fh.flags = fh.flags &^ os.O_APPEND
 	// 2. 실제 사용할 로컬 파일 오픈
 	// 사용자가 요청한 flags(RDONLY, WRONLY, RDWR, APPEND, TRUNC 등)가 그대로 적용됩니다.
 	fh.localFile, err = os.OpenFile(fh.localPath, fh.flags, 0644)
