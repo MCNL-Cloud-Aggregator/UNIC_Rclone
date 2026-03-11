@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"time"
@@ -42,6 +43,20 @@ var (
 func newUnicFileHandle(d *Dir, f *File, flags int) (*UnicFileHandle, error) {
 	fmt.Printf("%s unichandle: newUnicFileHandle: start\n", time.Now().Format("15:04:05.000"))
 	lPath, _ := f.Fs().(*unic.Fs).MakeOSDownloadPath(f.Path())
+
+	// 새로운 파일을 생성하는 경우 + 기존의 파일을 Truncate 하는 경우 로컬 캐시 파일 생성
+	if !f.exists() || flags&os.O_TRUNC != 0 {
+		// 디렉토리가 없을 수 있으니 MkdirAll 수행
+		os.MkdirAll(filepath.Dir(lPath), 0755)
+
+		// 파일 강제 생성(또는 0바이트로 초기화)
+		tmpFile, err := os.Create(lPath)
+		if err == nil {
+			tmpFile.Close() // 빈 파일만 만들어두고 당장 닫음 (나중에 openPending에서 다시 열도록 둠)
+		} else {
+			// 에러 로깅
+		}
+	}
 
 	fh := &UnicFileHandle{
 		remote:    f.Path(),
@@ -117,7 +132,6 @@ func (fh *UnicFileHandle) openPending() (err error) {
 	// 기존 내용을 무시해도 되는 상황이라면 다운로드를 건너뜀
 	// 여기서는 안전하게 'Truncate' 플래그가 없을 때만 다운로드하도록 구성.
 	if fh.o != nil && (fh.flags&os.O_TRUNC == 0) {
-		fmt.Print("check if disdownload\n")
 		rc, err := fh.o.Open(context.TODO())
 		if err != nil {
 			return fmt.Errorf("unic: openPending download failed: %w", err)
@@ -125,10 +139,11 @@ func (fh *UnicFileHandle) openPending() (err error) {
 		_ = rc.Close()
 	}
 
-	fmt.Print("check if disdownload completed\n")
-
 	// O_APPEND 플래그가 활성화 되어있는 상황에서도 writeAt() 함수를 제대로 실행하도록 O_APPEND 플래그 제거
 	fh.flags = fh.flags &^ os.O_APPEND
+
+	// O_EXCL 플래그 제거: newUnicFileHandle에서 로컬 파일이 미리 생성된 경우 OpenFile 시 에러(file exists) 발생 방지
+	fh.flags = fh.flags &^ os.O_EXCL
 
 	// 실제 사용할 로컬 캐시 파일 오픈
 	// 사용자가 요청한 flags(RDONLY, WRONLY, RDWR, APPEND, TRUNC)가 그대로 적용됨
