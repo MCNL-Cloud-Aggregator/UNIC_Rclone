@@ -667,7 +667,14 @@ func (f *File) Remove() (err error) {
 
 	if _, ok := f.Fs().(*unic.Fs); ok {
 		// unic.Fs 타입이 맞을 때 실행될 로직
-		return f.removeUnic()
+		err = f.removeUnic()
+		if err == nil {
+			f.mu.RLock()
+			d := f.d // 이 파일이 들어있는 부모 디렉토리 핸들(Dir) 확보
+			f.mu.RUnlock()
+			d.delObject(f.Name()) // 부모 디렉토리한테 "내 이름표 VFS 캐시에서 떼어줘!" 라고 요청
+		}
+		return err
 	}
 
 	f.mu.RLock()
