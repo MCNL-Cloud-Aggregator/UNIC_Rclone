@@ -465,7 +465,16 @@ func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...f
 	//fmt.Println("UNIC: Put_: dis_upload start")
 	//fmt.Printf("UNIC: Put_: remote: %s\n", remote)
 	// Call Dis_Upload
-	fileID := generateHash(remote)
+	var fileID string
+	node, findErr := f.findNodeFromTable(remote)
+	if findErr == nil && node != nil {
+		// 해당 파일이 원래 존재하던 파일을 단순 덮어쓰기하는 경우 (Rename 없이), 기존 ID를 재사용하여 과거 찌꺼기를 삭제!
+		fileID = node.Id
+	} else {
+		// 새롭게 생성되는 파일(또는 Rename 된 이후 새로 쓰이는 임시/원본 파일)의 경우 ID 충돌이 나지 않도록 유니크한 조합 사용
+		fileID = generateHash(remote)
+	}
+
 	err = dis_operations.Dis_Upload([]string{src.Name(), remote, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
 		return nil, fmt.Errorf("UNIC: Put_: Dis_Upload failed: %w", err)
@@ -479,11 +488,14 @@ func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...f
 		remote:  remote,
 		size:    info.Size(),
 		modTime: info.ModTime(),
+		id:      fileID,
 	}, nil
 }
 
 func generateHash(remotePath string) string {
-	backendRemoteHash := sha256.Sum256([]byte(remotePath))
+	// 파일 이름 기반의 해시만 사용할 경우 Rename으로 인한 ID(Hash) 공유/충돌 버그가 발생하므로 시간 값을 Salt로 가미
+	salt := fmt.Sprintf("%d", time.Now().UnixNano())
+	backendRemoteHash := sha256.Sum256([]byte(remotePath + salt))
 	fileID := hex.EncodeToString(backendRemoteHash[:])
 
 	return fileID
