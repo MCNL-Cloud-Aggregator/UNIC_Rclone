@@ -613,6 +613,129 @@ func (f *Fs) Root() string           { return f.root }
 func (f *Fs) String() string         { return f.name }
 func (f *Fs) Features() *fs.Features { return f.features }
 
+func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
+	fmt.Printf("%s UNIC: Move: Move method Start. src: %s, remote: %s\n", time.Now().Format("15:04:05.000"), src.Remote(), remote)
+
+	srcObj, ok := src.(*Object)
+	if !ok {
+		return nil, fs.ErrorCantMove
+	}
+
+	srcPath := srcObj.remote
+
+	oldFile, err := os.OpenFile(entrytable_path, os.O_RDWR, 0755)
+	if err != nil {
+		return nil, err
+	}
+	defer oldFile.Close()
+
+	tempPath := entrytable_path + ".tmp." + fmt.Sprintf("%d", time.Now().UnixNano())
+	newFile, err := os.Create(tempPath)
+	if err != nil {
+		return nil, err
+	}
+	defer newFile.Close()
+
+	decoder := json.NewDecoder(oldFile)
+	encoder := json.NewEncoder(newFile)
+
+	var movedNode *NodeEntry
+
+	for {
+		var node NodeEntry
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+
+		if node.Path == srcPath && node.Type == "file" {
+			node.Path = remote
+			node.Name = filepath.Base(remote)
+			nodeCopy := node
+			movedNode = &nodeCopy
+		}
+
+		if err := encoder.Encode(node); err != nil {
+			return nil, err
+		}
+	}
+
+	if movedNode == nil {
+		os.Remove(tempPath)
+		return nil, fs.ErrorObjectNotFound
+	}
+
+	oldFile.Close()
+	newFile.Close()
+
+	if err := os.Rename(tempPath, entrytable_path); err != nil {
+		os.Remove(tempPath)
+		return nil, err
+	}
+
+	return f.newObject(ctx, remote, movedNode)
+}
+
+func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string) error {
+	fmt.Printf("%s UNIC: DirMove: DirMove method Start. srcRemote: %s, dstRemote: %s\n", time.Now().Format("15:04:05.000"), srcRemote, dstRemote)
+
+	if src.Name() != f.Name() || src.Root() != f.Root() {
+		return fs.ErrorCantDirMove
+	}
+
+	oldFile, err := os.OpenFile(entrytable_path, os.O_RDWR, 0755)
+	if err != nil {
+		return err
+	}
+	defer oldFile.Close()
+
+	tempPath := entrytable_path + ".tmp." + fmt.Sprintf("%d", time.Now().UnixNano())
+	newFile, err := os.Create(tempPath)
+	if err != nil {
+		return err
+	}
+	defer newFile.Close()
+
+	decoder := json.NewDecoder(oldFile)
+	encoder := json.NewEncoder(newFile)
+
+	for {
+		var node NodeEntry
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		if node.Path == srcRemote || isUnderDir(node.Path, srcRemote) {
+			if node.Path == srcRemote {
+				node.Path = dstRemote
+				node.Name = filepath.Base(dstRemote)
+			} else {
+				node.Path = dstRemote + "/" + strings.TrimPrefix(node.Path, srcRemote+"/")
+				node.Name = filepath.Base(node.Path)
+			}
+		}
+
+		if err := encoder.Encode(node); err != nil {
+			return err
+		}
+	}
+
+	oldFile.Close()
+	newFile.Close()
+
+	if err := os.Rename(tempPath, entrytable_path); err != nil {
+		os.Remove(tempPath)
+		return err
+	}
+
+	return nil
+}
+
 func (f *Fs) Precision() time.Duration {
 	return time.Second // 최소 1초 정밀도
 }
