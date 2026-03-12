@@ -443,7 +443,7 @@ func (f *File) Size() int64 {
 	}
 
 	// if o is nil it isn't valid yet or there are writers, so return the size so far
-	if f._writingInProgress() {
+	if f._writingInProgress() || f.o == nil {
 		return f.size.Load()
 	}
 	return nonNegative(f.o.Size())

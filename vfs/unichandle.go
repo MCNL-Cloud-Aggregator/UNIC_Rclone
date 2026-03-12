@@ -44,12 +44,14 @@ func newUnicFileHandle(d *Dir, f *File, flags int) (*UnicFileHandle, error) {
 	fmt.Printf("%s unichandle: newUnicFileHandle: start\n", time.Now().Format("15:04:05.000"))
 	lPath, _ := f.Fs().(*unic.Fs).MakeOSDownloadPath(f.Path())
 
-	// 새로운 파일을 생성하는 경우 + 기존의 파일을 Truncate 하는 경우 로컬 캐시 파일 생성
-	if !f.exists() || flags&os.O_TRUNC != 0 {
-		// 디렉토리가 없을 수 있으니 MkdirAll 수행
-		os.MkdirAll(filepath.Dir(lPath), 0755)
+	// 디렉토리가 없을 수 있으니 MkdirAll 수행
+	os.MkdirAll(filepath.Dir(lPath), 0755)
 
-		// 파일 강제 생성(또는 0바이트로 초기화)
+	// O_TRUNC 플래그가 설정되어 있거나, 캐시와 원격 저장소 양쪽 모두에 파일이 없는 경우 빈 파일 강제 생성
+	_, statErr := os.Stat(lPath)
+	isLocalExist := statErr == nil
+
+	if (flags&os.O_TRUNC != 0) || (!isLocalExist && !f.exists()) {
 		tmpFile, err := os.Create(lPath)
 		if err == nil {
 			tmpFile.Close() // 빈 파일만 만들어두고 당장 닫음 (나중에 openPending에서 다시 열도록 둠)
@@ -214,6 +216,11 @@ func (fh *UnicFileHandle) writeAt(p []byte, off int64) (n int, err error) {
 	n, err = fh.localFile.WriteAt(p, off)
 
 	if n > 0 {
+		// 최초 쓰기 시에 VFS 디렉토리 캐시에 해당 파일을 즉시 추가 (ls 등에서 바로 보이도록)
+		if !fh.isDirty {
+			fh.file.d.addObject(fh.file)
+		}
+
 		fh.isDirty = true
 
 		newOffset := off + int64(n)
@@ -287,23 +294,57 @@ func (fh *UnicFileHandle) close() (err error) {
 	}
 
 	if fh.isDirty {
-		fs.Debugf(fh.remote, "Fixes on file Detected")
-		var newObj fs.Object
-		var uploadErr error
+		fs.Debugf(fh.remote, "Fixes on file Detected, scheduling async upload")
 
-		newObj, uploadErr = fh.file.Fs().(*unic.Fs).Put_(context.TODO(), fh.localFile, fh.remote)
-		if uploadErr != nil {
-			fs.Errorf(fh.remote, "upload failed: %v", uploadErr)
-			return uploadErr
+		// 필요한 변수들을 백그라운드 고루틴으로 넘기기 위해 변수에 캡쳐
+		remotePath := fh.remote
+		localPath := fh.localPath
+		vfsFile := fh.file
+		unicFs := fh.file.Fs().(*unic.Fs)
+
+		// 현재 로컬 파일 핸들은 즉시 닫아주어 Vim 등 다른 프로세스가 접근/삭제할 수 있게 놓아줌
+		if closeErr := fh.localFile.Close(); closeErr != nil {
+			fs.Errorf(fh.remote, "File Closing Failed: %v", closeErr)
 		}
 
-		// 성공 시 VFS의 객체 정보 업데이트
-		if newObj != nil {
-			fh.file.setObject(newObj)
-			fh.file.setSize(newObj.Size())
-			fmt.Printf("unichandle: close: file size: %d\n", fh.file.Size())
-		}
 		fh.isDirty = false
+
+		// 백그라운드(비동기)에서 업로드를 수행하는 Write-Back Cache 로직 실행
+		go func() {
+			// 5초 대기
+			time.Sleep(5 * time.Second)
+
+			// 시간이 지난 후 로컬 파일 캐시가 VFS나 사용자 요청으로 인해 지워졌는지 확인 (지워졌으면 스킵)
+			if _, err := os.Stat(localPath); os.IsNotExist(err) {
+				fmt.Printf("unichandle: async upload skipped (file deleted): %s\n", remotePath)
+				return
+			}
+
+			fmt.Printf("unichandle: async upload started: %s\n", remotePath)
+
+			// Put_ 을 위해 파일을 새로 엽니다. (위에서 닫았기 때문)
+			uploadFile, err := os.Open(localPath)
+			if err != nil {
+				fs.Errorf(remotePath, "async upload failed to re-open local cache: %v", err)
+				return
+			}
+			defer uploadFile.Close()
+
+			newObj, uploadErr := unicFs.Put_(context.Background(), uploadFile, remotePath)
+			if uploadErr != nil {
+				fs.Errorf(remotePath, "async upload failed: %v", uploadErr)
+				return
+			}
+
+			// 성공 시 부모 VFS File 객체에 정보 덮어쓰기
+			if newObj != nil && vfsFile != nil {
+				vfsFile.setObject(newObj)
+				vfsFile.setSize(newObj.Size())
+				fmt.Printf("unichandle: async upload complete: file size: %d, path: %s\n", vfsFile.Size(), remotePath)
+			}
+		}()
+
+		return nil
 	}
 
 	if closeErr := fh.localFile.Close(); closeErr != nil {
