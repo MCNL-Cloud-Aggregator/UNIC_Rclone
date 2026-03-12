@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"runtime/debug"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rclone/rclone/fs"
@@ -531,25 +532,41 @@ func (s *Server) Router() chi.Router {
 }
 
 // Time to wait to Shutdown an HTTP server
-const gracefulShutdownTime = 10 * time.Second
+const gracefulShutdownTime = 100 * time.Second
 
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown() error {
-	// Stop the atexit handler
-	if s.atexitHandle != nil {
-		atexit.Unregister(s.atexitHandle)
-		s.atexitHandle = nil
-	}
-	for _, ii := range s.instances {
-		expiry := time.Now().Add(gracefulShutdownTime)
-		ctx, cancel := context.WithDeadline(context.Background(), expiry)
-		if err := ii.httpServer.Shutdown(ctx); err != nil {
-			fs.Logf(nil, "error shutting down server: %s", err)
-		}
-		cancel()
-	}
-	s.wg.Wait()
-	return nil
+    // =====================================================================
+    // ★ [디버깅] 여기서 Shutdown이 왜 호출되었는지 범인을 잡습니다!
+    // =====================================================================
+    fmt.Println("\n🚨 [Rclone Daemon] Shutdown 함수가 호출되었습니다!")
+    fmt.Println("🚨 [Rclone Daemon] 누가 서버를 끄라고 했는지 역추적(Stack Trace)합니다:")
+    fmt.Println(string(debug.Stack())) // 이 코드가 전체 호출 경로를 쫘악 출력해 줍니다.
+    fmt.Println("=====================================================================\n")
+
+    // Stop the atexit handler
+    if s.atexitHandle != nil {
+        atexit.Unregister(s.atexitHandle)
+        s.atexitHandle = nil
+    }
+    
+    for _, ii := range s.instances {
+        expiry := time.Now().Add(gracefulShutdownTime)
+        ctx, cancel := context.WithDeadline(context.Background(), expiry)
+        
+        fmt.Printf("⏳ [Rclone Daemon] 기존 작업이 끝날 때까지 최대 %v 동안 대기합니다...\n", gracefulShutdownTime)
+        
+        if err := ii.httpServer.Shutdown(ctx); err != nil {
+            // ★ 아까 보셨던 그 타임아웃 에러가 찍히는 곳!
+            fs.Logf(nil, "error shutting down server: %s", err)
+            fmt.Printf("💥 [Rclone Daemon] 100초 대기 시간 초과! (남은 작업들이 강제 종료됨): %v\n", err)
+        } else {
+            fmt.Println("✅ [Rclone Daemon] 진행 중이던 모든 작업이 안전하게 완료되고 서버가 종료되었습니다.")
+        }
+        cancel()
+    }
+    s.wg.Wait()
+    return nil
 }
 
 // HTMLTemplate returns the parsed template, if WithTemplate option was passed.
