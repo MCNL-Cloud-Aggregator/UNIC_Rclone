@@ -145,34 +145,35 @@ func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, f
 
 	// Worker function
 	downloader := func() {
+		defer wg.Done()
 		for fileInfo := range jobs {
-			if err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs); err != nil {
+			err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs)
+			if err != nil {
 				mu.Lock()
-				errs = append(errs, err)
+				errs = append(errs, fmt.Errorf("failed to download shard from %s: %v", fileInfo.Remote.Name, err))
 				mu.Unlock()
 			}
-			wg.Done()
 		}
 	}
 
 	// Start worker goroutines
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		go func() {
-			downloader()
-			wg.Done()
-		}()
+		go downloader()
 	}
 
 	// Send jobs to workers
 	for _, fileInfo := range distributedFileInfos {
-		wg.Add(1)
 		jobs <- fileInfo
 	}
 
 	close(jobs) // Close channel to signal workers
 	wg.Wait()   // Wait for all workers to finish
 
+	if len(errs) > 0 {
+		// 에러가 1개 이상 발생했다면, 첫 번째 에러를 포함하여 에러 상태 반환
+		return fmt.Errorf("download completed with %d errors. First error: %w", len(errs), errs[0])
+	}
 	return nil
 }
 
