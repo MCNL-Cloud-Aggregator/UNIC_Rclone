@@ -255,24 +255,6 @@ func removeFileByName(files []FileInfo, fileName string) []FileInfo {
 	return updatedFiles
 }
 
-func RunWithAutoInput(input string, fn func() error) error {
-	// 1. 기존 Stdin 백업 (나중에 복구하기 위해)
-	oldStdin := os.Stdin
-	defer func() { os.Stdin = oldStdin }()
-
-	// 2. 파이프 생성 (r: 읽기용, w: 쓰기용)
-	r, w, _ := os.Pipe()
-	os.Stdin = r // 표준 입력을 파이프로 교체
-
-	// 3. 별도 고루틴에서 입력값("y\n") 쓰기
-	go func() {
-		w.Write([]byte(input + "\n")) // "y" + 엔터
-		w.Close()
-	}()
-
-	// 4. 실제 함수 실행 (이때 함수는 파이프에서 "y"를 읽음)
-	return fn()
-}
 
 func calculateRemovableClouds(shard int, parity int, totalClouds int) int {
 	if totalClouds == 0 {
@@ -299,6 +281,10 @@ func calculateRemovableClouds(shard int, parity int, totalClouds int) int {
 
 // DeleteDatamap: 리모트 삭제 후, 복구가 필요한 파일은 즉시 재업로드까지 수행
 func DeleteDatamap(remoteName string) error {
+	// Set AutoConfirm to bypass stdin prompts which break RCD server mode
+	AutoConfirm = true
+	defer func() { AutoConfirm = false }()
+
 	// 1. 데이터맵 읽기
 	filesMap, err := readJsonFile()
 	if err != nil {
@@ -313,18 +299,18 @@ func DeleteDatamap(remoteName string) error {
 		usesRemote := false
 		for _, shard := range fileInfo.DistributedFileInfos {
 			if shard.Remote.Name == remoteName {
-				fmt.Printf("여기 remote: %s", remoteName)
+				fmt.Printf("여기 remote: %s\n", remoteName)
 				usesRemote = true
 				break
 			}
 		}
-		if !usesRemote {
+		if !usesRemote { // 해당 파일은 삭제하려는 원격 서비스가 없는 거임
 			continue
 		}
 		fmt.Printf("calculate 시작, %d %d %d\n", fileInfo.Shard, fileInfo.Parity, len(fileInfo.RemoteList))
 		removable := calculateRemovableClouds(fileInfo.Shard, fileInfo.Parity, len(fileInfo.RemoteList))
 		fmt.Printf("removable 값 %d", removable)
-		if removable >= 1 {
+		if removable >= 1 { // 복구가 가능하니 reedsolomon 가능 리스트에 첨가
 			safeFiles = append(safeFiles, fileId)
 		} else {
 			unsafeFiles = append(unsafeFiles, fileId)
@@ -355,11 +341,8 @@ func DeleteDatamap(remoteName string) error {
 
 			// 1. 다운로드 (복구)
 			// Dis_Download 호출 (인자 3개: ID, 저장폴더, 리모트경로)
-			if err := RunWithAutoInput("y", func() error {
-				// 여기서 Dis_Download가 실행되면서 입력을 요구하면,
-				// 위에서 넣어준 "y"를 읽고 자동으로 넘어갑니다.
-				return Dis_Download([]string{fileId, tempDir, fileInfo.FilePath}, false)
-			}); err != nil {
+			fmt.Printf("인자값: %s %s %s\n", fileId, tempDir, fileInfo.FilePath)
+			if err := Dis_Download([]string{fileId, tempDir, fileInfo.FilePath}, false); err != nil {
 				fmt.Printf("   [Error] Download failed for %s. Skipping migration: %v\n", fileId, err)
 				continue
 			}
@@ -369,39 +352,62 @@ func DeleteDatamap(remoteName string) error {
 				return fmt.Errorf("failed Dis_rm for %s: %w", fileId, err)
 			}
 
-			// 3. ★ 재업로드 수행 (Dis_Upload 호출 리팩토링) ★
+			// ---------------------------------------------------------
+            // 3. ★ 재업로드 수행 (Dis_Upload 호출) ★
+            // ---------------------------------------------------------
+            localTempFilePath := filepath.Join(tempDir, fileInfo.FileName)
+            remotePath := fileInfo.FilePath
 
-			// (1) 로컬 파일 경로 (다운로드된 파일)
-			localTempFilePath := filepath.Join(tempDir, fileInfo.FileName)
+            // ====================================================================
+            // ★ [수정됨] 파일의 RemotePool 데이터를 활용해 활성 클라우드 추출 ★
+            // ====================================================================
+            fmt.Printf("🔍 추출 작업: '%s' 파일의 RemotePool에서 대상 클라우드를 찾습니다...\n", fileInfo.FileName)
 
-			// (2) 리모트 경로 (메타데이터에 저장되어 있던 원래 경로)
-			// Put 메서드의 src.Remote()에 해당함
-			remotePath := fileInfo.FilePath
+            var validRemotes []config.Remote
+            seenRemotes := make(map[string]bool) // 중복 제거용 맵
 
-			// (3) 업로드 대상 리모트 목록 재구성 (삭제할 리모트 제외)
-			allRemotes := config.GetRemotes()
-			var validRemotes []config.Remote
-			for _, r := range allRemotes {
-				if r.Name != remoteName {
-					validRemotes = append(validRemotes, r)
-				}
-			}
-			newTargets := UploadTargets{
-				Remotes:   validRemotes,
-				UseConfig: false,
-			}
+            // 파일의 파편 정보(DistributedFileInfos)에 기록된 RemotePool을 순회하며
+            // 삭제하려는 리모트(remoteName)를 제외한 나머지만 validRemotes에 담습니다.
+            for _, dFile := range fileInfo.DistributedFileInfos {
+                for _, r := range dFile.RemotePool {
+                    // 삭제할 리모트가 아니고, 아직 배열에 안 들어간 리모트라면 추가!
+                    if r.Name != remoteName && !seenRemotes[r.Name] {
+                        validRemotes = append(validRemotes, r)
+                        seenRemotes[r.Name] = true
+                    }
+                }
+            }
 
-			// (4) Dis_Upload 호출
-			// args: [localTempFilePath, remotePath, fileId] 순서로 구성 (Put 메서드와 동일)
-			fmt.Printf("   -> Re-uploading %s to redistribute shards...\n", fileInfo.FileName)
+            fmt.Printf("🎯 재업로드 대상 클라우드 확정: %d개\n", len(validRemotes))
+            for i, r := range validRemotes {
+                fmt.Printf("   - Target %d: %s\n", i+1, r.Name)
+            }
 
-			err := Dis_Upload(
-				[]string{localTempFilePath, remotePath, fileId}, // args
-				newTargets,                    // targets
-				false,                         // options
-				RoundRobinFromSelectedRemotes, // strategy
-			)
+            newTargets := UploadTargets{
+                Remotes:   validRemotes,
+                UseConfig: false,
+            }
+            // ====================================================================
 
+            fmt.Printf("[3. Upload] Starting Dis_Upload for %s to %d targets...\n", fileId, len(validRemotes))
+            
+            // taskID, time 등의 에러가 나던 로깅 변수들 모두 제거
+            err := Dis_Upload(
+                []string{localTempFilePath, remotePath, fileId},
+                newTargets,
+                false,
+                RoundRobinFromSelectedRemotes,
+            )
+
+            if err != nil {
+                fmt.Printf("   ❌ [Error] Upload failed for %s: %v\n", fileId, err)
+            } else {
+                // 4. 성공 시 임시 파일 삭제 (Cleanup)
+                if err := os.Remove(localTempFilePath); err != nil {
+                    fmt.Printf("   ⚠️ [Warning] Failed to delete temp file %s: %v\n", localTempFilePath, err)
+                }
+                fmt.Printf("   ✅ [Migration] Completed for %s\n", fileId)
+            }
 			if err != nil {
 				fmt.Printf("   [Error] Upload failed for %s: %v\n", fileId, err)
 			} else {

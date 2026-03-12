@@ -300,6 +300,7 @@ func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string
 
 	// Worker function
 	uploader := func() {
+		defer wg.Done()
 		for shardInfo := range jobs {
 			// Allocate Remote
 			mu.Lock()
@@ -307,7 +308,7 @@ func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string
 			mu.Unlock()
 			if err != nil {
 				mu.Lock()
-				errs = append(errs, err)
+				errs = append(errs, fmt.Errorf("AllocateRemote error: %v", err))
 				mu.Unlock()
 				continue
 			}
@@ -322,22 +323,17 @@ func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string
 				errs = append(errs, err)
 				mu.Unlock()
 			}
-			wg.Done()
 		}
 	}
 
 	// Start worker goroutines
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		go func() {
-			uploader()
-			wg.Done()
-		}()
+		go uploader()
 	}
 
 	// Send jobs to workers
 	for _, shardInfo := range distributedFileArray {
-		wg.Add(1)
 		jobs <- shardInfo
 	}
 
