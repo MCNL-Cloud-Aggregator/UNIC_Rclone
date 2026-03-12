@@ -31,7 +31,12 @@ func AskDestination() string {
 	return dest
 }
 
+var AutoConfirm bool = false
+
 func GetUserConfirmation(prompt string, options []string, defaultIndex int) bool {
+	if AutoConfirm {
+		return true
+	}
 	switch i := config.CommandDefault(options, defaultIndex); i {
 	case 'y':
 		return true

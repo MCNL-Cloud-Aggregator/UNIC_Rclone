@@ -255,24 +255,6 @@ func removeFileByName(files []FileInfo, fileName string) []FileInfo {
 	return updatedFiles
 }
 
-func RunWithAutoInput(input string, fn func() error) error {
-	// 1. 기존 Stdin 백업 (나중에 복구하기 위해)
-	oldStdin := os.Stdin
-	defer func() { os.Stdin = oldStdin }()
-
-	// 2. 파이프 생성 (r: 읽기용, w: 쓰기용)
-	r, w, _ := os.Pipe()
-	os.Stdin = r // 표준 입력을 파이프로 교체
-
-	// 3. 별도 고루틴에서 입력값("y\n") 쓰기
-	go func() {
-		w.Write([]byte(input + "\n")) // "y" + 엔터
-		w.Close()
-	}()
-
-	// 4. 실제 함수 실행 (이때 함수는 파이프에서 "y"를 읽음)
-	return fn()
-}
 
 func calculateRemovableClouds(shard int, parity int, totalClouds int) int {
 	if totalClouds == 0 {
@@ -299,6 +281,10 @@ func calculateRemovableClouds(shard int, parity int, totalClouds int) int {
 
 // DeleteDatamap: 리모트 삭제 후, 복구가 필요한 파일은 즉시 재업로드까지 수행
 func DeleteDatamap(remoteName string) error {
+	// Set AutoConfirm to bypass stdin prompts which break RCD server mode
+	AutoConfirm = true
+	defer func() { AutoConfirm = false }()
+
 	// 1. 데이터맵 읽기
 	filesMap, err := readJsonFile()
 	if err != nil {
@@ -313,7 +299,7 @@ func DeleteDatamap(remoteName string) error {
 		usesRemote := false
 		for _, shard := range fileInfo.DistributedFileInfos {
 			if shard.Remote.Name == remoteName {
-				fmt.Printf("여기 remote: %s", remoteName)
+				fmt.Printf("여기 remote: %s\n", remoteName)
 				usesRemote = true
 				break
 			}
@@ -355,12 +341,8 @@ func DeleteDatamap(remoteName string) error {
 
 			// 1. 다운로드 (복구)
 			// Dis_Download 호출 (인자 3개: ID, 저장폴더, 리모트경로)
-			if err := RunWithAutoInput("y", func() error {
-				// 여기서 Dis_Download가 실행되면서 입력을 요구하면,
-				// 위에서 넣어준 "y"를 읽고 자동으로 넘어갑니다.
-				fmt.Printf("인자값: %s %s %s\n",fileId, tempDir, fileInfo.FilePath)
-				return Dis_Download([]string{fileId, tempDir, fileInfo.FilePath}, false)
-			}); err != nil {
+			fmt.Printf("인자값: %s %s %s\n", fileId, tempDir, fileInfo.FilePath)
+			if err := Dis_Download([]string{fileId, tempDir, fileInfo.FilePath}, false); err != nil {
 				fmt.Printf("   [Error] Download failed for %s. Skipping migration: %v\n", fileId, err)
 				continue
 			}
