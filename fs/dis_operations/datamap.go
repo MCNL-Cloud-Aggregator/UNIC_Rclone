@@ -255,7 +255,6 @@ func removeFileByName(files []FileInfo, fileName string) []FileInfo {
 	return updatedFiles
 }
 
-
 func calculateRemovableClouds(shard int, parity int, totalClouds int) int {
 	if totalClouds == 0 {
 		return 0
@@ -353,61 +352,61 @@ func DeleteDatamap(remoteName string) error {
 			}
 
 			// ---------------------------------------------------------
-            // 3. ★ 재업로드 수행 (Dis_Upload 호출) ★
-            // ---------------------------------------------------------
-            localTempFilePath := filepath.Join(tempDir, fileInfo.FileName)
-            remotePath := fileInfo.FilePath
+			// 3. ★ 재업로드 수행 (Dis_Upload 호출) ★
+			// ---------------------------------------------------------
+			localTempFilePath := filepath.Join(tempDir, fileInfo.FileName)
+			remotePath := fileInfo.FilePath
 
-            // ====================================================================
-            // ★ [수정됨] 파일의 RemotePool 데이터를 활용해 활성 클라우드 추출 ★
-            // ====================================================================
-            fmt.Printf("🔍 추출 작업: '%s' 파일의 RemotePool에서 대상 클라우드를 찾습니다...\n", fileInfo.FileName)
+			// ====================================================================
+			// ★ [수정됨] 파일의 RemotePool 데이터를 활용해 활성 클라우드 추출 ★
+			// ====================================================================
+			fmt.Printf("🔍 추출 작업: '%s' 파일의 RemotePool에서 대상 클라우드를 찾습니다...\n", fileInfo.FileName)
 
-            var validRemotes []config.Remote
-            seenRemotes := make(map[string]bool) // 중복 제거용 맵
+			var validRemotes []config.Remote
+			seenRemotes := make(map[string]bool) // 중복 제거용 맵
 
-            // 파일의 파편 정보(DistributedFileInfos)에 기록된 RemotePool을 순회하며
-            // 삭제하려는 리모트(remoteName)를 제외한 나머지만 validRemotes에 담습니다.
-            for _, dFile := range fileInfo.DistributedFileInfos {
-                for _, r := range dFile.RemotePool {
-                    // 삭제할 리모트가 아니고, 아직 배열에 안 들어간 리모트라면 추가!
-                    if r.Name != remoteName && !seenRemotes[r.Name] {
-                        validRemotes = append(validRemotes, r)
-                        seenRemotes[r.Name] = true
-                    }
-                }
-            }
+			// 파일의 파편 정보(DistributedFileInfos)에 기록된 RemotePool을 순회하며
+			// 삭제하려는 리모트(remoteName)를 제외한 나머지만 validRemotes에 담습니다.
+			for _, dFile := range fileInfo.DistributedFileInfos {
+				for _, r := range dFile.RemotePool {
+					// 삭제할 리모트가 아니고, 아직 배열에 안 들어간 리모트라면 추가!
+					if r.Name != remoteName && !seenRemotes[r.Name] {
+						validRemotes = append(validRemotes, r)
+						seenRemotes[r.Name] = true
+					}
+				}
+			}
 
-            fmt.Printf("🎯 재업로드 대상 클라우드 확정: %d개\n", len(validRemotes))
-            for i, r := range validRemotes {
-                fmt.Printf("   - Target %d: %s\n", i+1, r.Name)
-            }
+			fmt.Printf("🎯 재업로드 대상 클라우드 확정: %d개\n", len(validRemotes))
+			for i, r := range validRemotes {
+				fmt.Printf("   - Target %d: %s\n", i+1, r.Name)
+			}
 
-            newTargets := UploadTargets{
-                Remotes:   validRemotes,
-                UseConfig: false,
-            }
-            // ====================================================================
+			newTargets := UploadTargets{
+				Remotes:   validRemotes,
+				UseConfig: false,
+			}
+			// ====================================================================
 
-            fmt.Printf("[3. Upload] Starting Dis_Upload for %s to %d targets...\n", fileId, len(validRemotes))
-            
-            // taskID, time 등의 에러가 나던 로깅 변수들 모두 제거
-            err := Dis_Upload(
-                []string{localTempFilePath, remotePath, fileId},
-                newTargets,
-                false,
-                RoundRobinFromSelectedRemotes,
-            )
+			fmt.Printf("[3. Upload] Starting Dis_Upload for %s to %d targets...\n", fileId, len(validRemotes))
 
-            if err != nil {
-                fmt.Printf("   ❌ [Error] Upload failed for %s: %v\n", fileId, err)
-            } else {
-                // 4. 성공 시 임시 파일 삭제 (Cleanup)
-                if err := os.Remove(localTempFilePath); err != nil {
-                    fmt.Printf("   ⚠️ [Warning] Failed to delete temp file %s: %v\n", localTempFilePath, err)
-                }
-                fmt.Printf("   ✅ [Migration] Completed for %s\n", fileId)
-            }
+			// taskID, time 등의 에러가 나던 로깅 변수들 모두 제거
+			err := Dis_Upload(
+				[]string{localTempFilePath, remotePath, fileId},
+				newTargets,
+				false,
+				RoundRobinFromSelectedRemotes,
+			)
+
+			if err != nil {
+				fmt.Printf("   ❌ [Error] Upload failed for %s: %v\n", fileId, err)
+			} else {
+				// 4. 성공 시 임시 파일 삭제 (Cleanup)
+				if err := os.Remove(localTempFilePath); err != nil {
+					fmt.Printf("   ⚠️ [Warning] Failed to delete temp file %s: %v\n", localTempFilePath, err)
+				}
+				fmt.Printf("   ✅ [Migration] Completed for %s\n", fileId)
+			}
 			if err != nil {
 				fmt.Printf("   [Error] Upload failed for %s: %v\n", fileId, err)
 			} else {
