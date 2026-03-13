@@ -270,7 +270,7 @@ func ConfigChooseFixed(state string, name string, help string, items []OptionExa
 			for i, item := range choose.Option.Examples {
 				lowerHelp := strings.ToLower(item.Help)
 
-				if strings.Contains(lowerHelp, "personal") || strings.Contains(lowerHelp, "onedrive") {
+				if strings.Contains(lowerHelp, "onedrive") {
 					bestMatchIndex = i
 					break
 				}
