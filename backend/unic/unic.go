@@ -449,7 +449,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 
 // UNIC을 마운팅한 mount point에 write system call이 들어올 때 실행
 func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...fs.OpenOption) (fs.Object, error) {
-	fmt.Printf("%s UNIC: Put_: Put_ method Start\n", time.Now().Format("15:04:05.000"))
+	fmt.Printf("%s [%s] UNIC: Put_: Put_ method Start\n", time.Now().Format("15:04:05.000"), remote)
 
 	// src 파일 핸들로부터 파일 정보(FileInfo) 가져오기
 	info, err := src.Stat()
@@ -462,8 +462,6 @@ func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...f
 		fmt.Printf("UNIC: Put_: File do not exist error: %s\n", err)
 	}
 
-	//fmt.Println("UNIC: Put_: dis_upload start")
-	//fmt.Printf("UNIC: Put_: remote: %s\n", remote)
 	// Call Dis_Upload
 	var fileID string
 	node, findErr := f.findNodeFromTable(remote)
@@ -475,11 +473,12 @@ func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...f
 		fileID = generateHash(remote)
 	}
 
+	fmt.Printf("[%s] UNIC: Put_: dis_upload start\n", remote)
 	err = dis_operations.Dis_Upload([]string{src.Name(), remote, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
 		return nil, fmt.Errorf("UNIC: Put_: Dis_Upload failed: %w", err)
 	}
-	//fmt.Println("UNIC: Put_: Put_ Success")
+	fmt.Printf("[%s] UNIC: Put_: dis_upload end\n", remote)
 
 	// Return the object
 	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
@@ -513,7 +512,6 @@ func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 	defer entryTable.Close()
 
 	// entrytable에 쓸 NodeEntry 정의
-	//fmt.Printf("UNIC: Mkdir: dirPath: %s\n", dirPath)
 	var node NodeEntry // entrytable에 쓸 데이터를 저장하고 있을 변수
 
 	node.Id = generateHash(dirPath)
@@ -533,8 +531,7 @@ func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 }
 
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
-	fmt.Printf("%s UNIC: Rmdir: Rmdir method Start\n", time.Now().Format("15:04:05.000"))
-	//fmt.Printf("UNIC: Rmdir: dir: %s", dir)
+	fmt.Printf("%s [%s] UNIC: Rmdir: Rmdir method Start\n", time.Now().Format("15:04:05.000"), dir)
 
 	// open entrytable
 	entryTable, err := os.OpenFile(entrytable_path, os.O_RDWR|os.O_APPEND, 0755)
@@ -566,7 +563,6 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 		// node가 file일 경우는 어차피 rm -rf 명령어로 재귀적으로 삭제되면서
 		// 해당 file에 대한 Remove() method가 실행됨
 		if node.Type == "dir" {
-			//fmt.Printf("UNIC: Rmdir: removeNodeFromTable method Start, node.Path: %s\n", node.Path)
 			removeNodeFromTable(node.Path)
 		} else {
 			return fmt.Errorf("entrytable.jsonl type error\n")
@@ -626,7 +622,7 @@ func (f *Fs) String() string         { return f.name }
 func (f *Fs) Features() *fs.Features { return f.features }
 
 func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
-	fmt.Printf("%s UNIC: Move: Move method Start. src: %s, remote: %s\n", time.Now().Format("15:04:05.000"), src.Remote(), remote)
+	fmt.Printf("%s [%s] UNIC: Move: Move method Start. src: %s, remote: %s\n", time.Now().Format("15:04:05.000"), src.Remote(), src.Remote(), remote)
 
 	srcObj, ok := src.(*Object)
 	if !ok {
@@ -691,7 +687,7 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 }
 
 func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string) error {
-	fmt.Printf("%s UNIC: DirMove: DirMove method Start. srcRemote: %s, dstRemote: %s\n", time.Now().Format("15:04:05.000"), srcRemote, dstRemote)
+	fmt.Printf("%s [%s] UNIC: DirMove: DirMove method Start. srcRemote: %s, dstRemote: %s\n", time.Now().Format("15:04:05.000"), srcRemote, srcRemote, dstRemote)
 
 	if src.Name() != f.Name() || src.Root() != f.Root() {
 		return fs.ErrorCantDirMove
@@ -800,10 +796,9 @@ func (f *Fs) MakeOSDownloadPath(remotePath string) (string, error) {
 
 // UNIC을 마운팅한 mount point에 read system call이 들어올 때 실행
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
-	fmt.Printf("%s UNIC: Open: Open method Start\n", time.Now().Format("15:04:05.000"))
+	fmt.Printf("%s [%s] UNIC: Open: Open method Start\n", time.Now().Format("15:04:05.000"), o.Remote())
 
 	// Download 폴더 생성 : home/rclone/Download/{userId}/{remotename}/{remotepath}
-	//fmt.Println("UNIC: Open: Download 폴더 생성")
 	remotePath := o.Remote()
 	downloadPath, err := o.fs.MakeOSDownloadPath(remotePath)
 	if err != nil {
@@ -816,27 +811,25 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 	}
 
 	// Dis_Download 로직 호출
-	//fmt.Println("UNIC: Open: Dis_Download start")
 	fileId := o.id
-	//fmt.Printf("fileId=%s, downloadDir=%s, remotePath=%s\n", fileId, downloadDir, remotePath)
 
 	// 파일이 이미 Download 폴더에 존재한다면, Dis_Download 호출하지 않음
 	fi, err := os.Stat(downloadPath)
 	if fi == nil {
+		fmt.Printf("[%s] UNIC: Open: Dis_Download start\n", remotePath)
 		err = dis_operations.Dis_Download([]string{fileId, downloadDir, remotePath}, false)
 		if err != nil {
 			return nil, fmt.Errorf("UNIC: Open: Dis_Download 실패: fileId=%s, error=%v", fileId, err)
 		}
+		fmt.Printf("[%s] UNIC: Open: Dis_Download end\n", remotePath)
 	}
 
 	// Dis_Download 결과 만들어진 파일 open
-	//fmt.Println("UNIC: Open: Dis_Download 결과 만들어진 파일 open")
 	f, err := os.Open(downloadPath)
 	if err != nil {
 		os.Remove(downloadPath)
 		return nil, fmt.Errorf("UNIC: Open: downloadedFilePath open 실패: fileId=%s, error=%v", fileId, err)
 	}
-	//fmt.Println("UNIC: Open: Open Success")
 
 	return f, nil
 }
@@ -909,10 +902,10 @@ func (o *Object) Remove(ctx context.Context) error {
 	fmt.Printf("%s UNIC: Remove: Remove method start\n", time.Now().Format("15:04:05.000"))
 
 	// dis_rm 수행
-	//fmt.Println("UNIC: Remove: Remove dis_rm start")
+	fmt.Printf("[%s] UNIC: Remove: Remove dis_rm start\n", o.remote)
 	fileId := o.id
-	fmt.Printf("UNIC: Remove: Remove fileId: %s\n", fileId)
 	err := dis_operations.Dis_rm([]string{fileId}, false)
+	fmt.Printf("[%s] UNIC: Remove: Remove dis_rm end\n", o.remote)
 	if err != nil {
 		return err
 	}
