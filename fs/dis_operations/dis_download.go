@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-    "github.com/rclone/rclone/fs"
-    fsync "github.com/rclone/rclone/fs/sync"
 	"github.com/rclone/rclone/cmd"
+	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/operations"
+	fsync "github.com/rclone/rclone/fs/sync"
 	"github.com/rclone/rclone/reedsolomon"
 	"github.com/spf13/cobra"
 )
@@ -321,46 +321,46 @@ func getAbsolutePath(arg string) (string, error) {
 }
 
 func remoteCallCopyforDown(args []string) error {
-    if len(args) < 2 {
-        return fmt.Errorf("invalid arguments: %v", args)
-    }
+	if len(args) < 2 {
+		return fmt.Errorf("invalid arguments: %v", args)
+	}
 
-    ctx := context.Background()
-    srcString := args[0] // 예: my_dropbox:Distribution/hash_val
-    dstString := args[1] // 예: /home/kali/.config/rclone/shard
+	ctx := context.Background()
+	srcString := args[0] // 예: my_dropbox:Distribution/hash_val
+	dstString := args[1] // 예: /home/kali/.config/rclone/shard
 
-    fmt.Printf("🚀 [Pure API Copy] Starting download from %s to %s\n", srcString, dstString)
+	fmt.Printf("🚀 [Pure API Copy] Starting download from %s to %s\n", srcString, dstString)
 
-    // 1. 목적지(Destination) 파일시스템(Fs) 객체 생성 (로컬 폴더)
-    fdst, err := fs.NewFs(ctx, dstString)
-    if err != nil {
-        return fmt.Errorf("failed to create destination FS: %w", err)
-    }
+	// 1. 목적지(Destination) 파일시스템(Fs) 객체 생성 (로컬 폴더)
+	fdst, err := fs.NewFs(ctx, dstString)
+	if err != nil {
+		return fmt.Errorf("failed to create destination FS: %w", err)
+	}
 
-    // 2. 소스(Source) 파일시스템(Fs) 객체 생성 (클라우드 파편)
-    fsrc, err := fs.NewFs(ctx, srcString)
-    
-    // ★ Rclone 엔진의 핵심: 소스 경로가 '파일'인 경우 ErrorIsFile 에러를 뱉음 ★
-    if err == fs.ErrorIsFile {
-        // 이 경우 fsrc는 파일이 들어있는 '부모 폴더'가 됩니다.
-        // 경로의 맨 마지막 부분(파일명)을 추출해서 단일 파일 복사를 수행합니다.
-        srcFileName := path.Base(srcString)
-        
-        // Cobra 알바생을 거치지 않고 Rclone 심장부(API)에 직접 파일 복사 지시!
-        err = operations.CopyFile(ctx, fdst, fsrc, srcFileName, srcFileName)
-        if err != nil {
-            return fmt.Errorf("failed to copy file using pure API: %w", err)
-        }
-        return nil
-    } else if err != nil {
-        return fmt.Errorf("failed to create source FS: %w", err)
-    }
+	// 2. 소스(Source) 파일시스템(Fs) 객체 생성 (클라우드 파편)
+	fsrc, err := fs.NewFs(ctx, srcString)
 
-    // 3. 만약 파일이 아니라 '폴더' 형태로 들어왔을 경우 (예외 처리)
-    err = fsync.CopyDir(ctx, fdst, fsrc, false)
-    if err != nil {
-        return fmt.Errorf("failed to copy directory using pure API: %w", err)
-    }
+	// ★ Rclone 엔진의 핵심: 소스 경로가 '파일'인 경우 ErrorIsFile 에러를 뱉음 ★
+	if err == fs.ErrorIsFile {
+		// 이 경우 fsrc는 파일이 들어있는 '부모 폴더'가 됩니다.
+		// 경로의 맨 마지막 부분(파일명)을 추출해서 단일 파일 복사를 수행합니다.
+		srcFileName := path.Base(srcString)
 
-    return nil
+		// Cobra 알바생을 거치지 않고 Rclone 심장부(API)에 직접 파일 복사 지시!
+		err = operations.CopyFile(ctx, fdst, fsrc, srcFileName, srcFileName)
+		if err != nil {
+			return fmt.Errorf("failed to copy file using pure API: %w", err)
+		}
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to create source FS: %w", err)
+	}
+
+	// 3. 만약 파일이 아니라 '폴더' 형태로 들어왔을 경우 (예외 처리)
+	err = fsync.CopyDir(ctx, fdst, fsrc, false)
+	if err != nil {
+		return fmt.Errorf("failed to copy directory using pure API: %w", err)
+	}
+
+	return nil
 }

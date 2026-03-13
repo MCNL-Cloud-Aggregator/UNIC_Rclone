@@ -57,6 +57,7 @@ type File struct {
 	nwriters         atomic.Int32                    // len(writers)
 	appendMode       bool                            // file was opened with O_APPEND
 	isLink           bool                            // file represents a symlink
+	cancelUpload     context.CancelFunc              // cancellation for background upload
 }
 
 // newFile creates a new File
@@ -997,4 +998,15 @@ func (f *File) Truncate(size int64) (err error) {
 		return fh.Truncate(size)
 	}
 	return nil
+}
+
+// CancelPendingUpload cancels any pending background upload for this file
+func (f *File) CancelPendingUpload() {
+	f.mu.Lock()
+	cancel := f.cancelUpload
+	f.cancelUpload = nil
+	f.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
