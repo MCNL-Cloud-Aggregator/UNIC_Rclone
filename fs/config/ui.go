@@ -616,6 +616,28 @@ func DeleteRemote(name string) {
 		}
 	}
 	LoadedData().DeleteSection(name)
+
+	if upstreamsStr, found := FileGetValue("unic", "upstreams"); found {
+		var newUpstreams []string
+
+		// 띄어쓰기를 기준으로 문자열을 쪼갭니다. (예: "my_google:/ my_dropbox:/")
+		parts := strings.Split(upstreamsStr, " ")
+		for _, p := range parts {
+			// 지우려는 클라우드(예: "my_dropbox:")로 시작하지 않는 것만 골라냅니다.
+			if p != "" && !strings.HasPrefix(p, name+":") {
+				newUpstreams = append(newUpstreams, p)
+			}
+		}
+
+		// 남은 건강한 클라우드들만 다시 띄어쓰기로 뭉쳐서 하나의 문자열로 만듭니다.
+		newUpstreamsStr := strings.Join(newUpstreams, " ")
+
+		// 보여주신 FileSetValue 함수를 이용해 rclone.conf 에 값을 덮어씌웁니다.
+		FileSetValue("unic", "upstreams", newUpstreamsStr)
+		fmt.Printf("SUCCESS: Removed '%s' from unic upstreams. New upstreams: [%s]\n", name, newUpstreamsStr)
+	} else {
+		fmt.Printf("WARNING: 'unic' remote or 'upstreams' key not found in config.\n")
+	}
 	SaveConfig()
 }
 
