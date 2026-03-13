@@ -265,7 +265,19 @@ func ConfigChooseFixed(state string, name string, help string, items []OptionExa
 	}
 	if len(choose.Option.Examples) > 0 {
 		if name == "config_driveid" {
-			choose.Option.Default = choose.Option.Examples[1].Value
+			bestMatchIndex := 0 // 기본값 0번
+
+			for i, item := range choose.Option.Examples {
+				lowerHelp := strings.ToLower(item.Help)
+
+				if strings.Contains(lowerHelp, "onedrive") {
+					bestMatchIndex = i
+					break
+				}
+			}
+			choose.Option.Default = choose.Option.Examples[bestMatchIndex].Value
+			fmt.Printf("[Auto-Select] 'config_driveid'에서 %d번 옵션을 자동으로 선택했습니다: %s\n", bestMatchIndex, choose.Option.Examples[bestMatchIndex].Help)
+
 		} else {
 			choose.Option.Default = choose.Option.Examples[0].Value
 		}
