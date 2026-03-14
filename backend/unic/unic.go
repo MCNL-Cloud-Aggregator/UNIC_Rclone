@@ -238,12 +238,28 @@ func isUnderDir(path, prefix string) bool {
 	return strings.HasPrefix(path, prefix+"/")
 }
 
+//// path가 prefix의 바로 하위에 있는지 확인
+//func isDirectChild(prefix, path_ string) bool {
+//	if prefix == "/" {
+//		return path.Dir(path_) == "/"
+//	}
+//	return path.Dir(path_) == prefix
+//}
+
 // path가 prefix의 바로 하위에 있는지 확인
-func isDirectChild(prefix, path_ string) bool {
-	if prefix == "/" {
-		return path.Dir(path_) == "/"
+func isDirectChild(path_, prefix string) bool {
+	// 자기 자신은 제외
+	if path_ == prefix || (prefix == "" && path_ == "/") || (prefix == "/" && path_ == "") {
+		return false
 	}
-	return path.Dir(path_) == prefix
+
+	parent := path.Dir(path_)
+
+	// 루트 경로 처리 (prefix가 "" 또는 "/"인 경우)
+	if prefix == "" || prefix == "/" {
+		return parent == "." || parent == "/"
+	}
+	return parent == prefix
 }
 
 func openEntryTable(path string) (*io.PipeReader, error) {
