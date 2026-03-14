@@ -96,7 +96,6 @@ func (f *File) removeUnic() error {
 	}
 	return nil
 }
-
 func (f *File) openUnic(flags int) (fh *UnicFileHandle, err error) {
 	fmt.Printf("[%s] %s unichandle: openUnic: start\n", f.Path(), time.Now().Format("15:04:05.000"))
 	fmt.Printf("[%s] unichandle: vfsFile.modtime: %v\n", f.Path(), f.ModTime())
@@ -309,6 +308,10 @@ func (fh *UnicFileHandle) close() (err error) {
 		// os.Stat(localPath) 대신 vfsFile.ModTime()을 사용하여 VFS 시스템 내의 일관성을 유지합니다.
 		preservedModTime := vfsFile.ModTime()
 
+		// dis_upload 전에 메타데이터 기록
+		vfsFile.SetModTime(preservedModTime)
+		vfsFile.setSize(vfsFile.Size())
+
 		// 현재 로컬 파일 핸들은 즉시 닫아주어 Vim 등 다른 프로세스가 접근/삭제할 수 있게 놓아줌
 		if closeErr := fh.localFile.Close(); closeErr != nil {
 			fs.Errorf(fh.remote, "File Closing Failed: %v", closeErr)
@@ -378,13 +381,12 @@ func (fh *UnicFileHandle) close() (err error) {
 
 			// 성공 시 부모 VFS File 객체에 정보 덮어쓰기
 			if newObj != nil && vfsFile != nil {
+				if !preservedModTime.IsZero() {
+					newObj.SetModTime(context.Background(), preservedModTime)
+				}
 				vfsFile.setObject(newObj)
 				vfsFile.setSize(newObj.Size())
 
-				// 서버에서 돌아온 새 시간이 아닌, 업로드 직전의 로컬 시간을 강제 적용합니다.
-				if !preservedModTime.IsZero() {
-					_ = vfsFile.SetModTime(preservedModTime)
-				}
 				fmt.Printf("[%s] unichandle: vfsFile.modtime: %v\n", remotePath, vfsFile.ModTime())
 				fmt.Printf("[%s] unichandle: async upload complete: file size: %d\n", remotePath, vfsFile.Size())
 			}
