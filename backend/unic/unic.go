@@ -745,7 +745,7 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 }
 
 func (f *Fs) Precision() time.Duration {
-	return time.Second // 최소 1초 정밀도
+	return time.Nanosecond
 }
 
 func (f *Fs) Hashes() hash.Set {
@@ -776,7 +776,10 @@ func (o *Object) Size() int64 {
 
 func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) { return "", nil }
 func (o *Object) Storable() bool                                         { return true }
-func (o *Object) SetModTime(ctx context.Context, t time.Time) error      { return nil }
+func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
+	o.modTime = t
+	return nil
+}
 
 func (f *Fs) MakeOSDownloadPath(remotePath string) (string, error) {
 	home, err := os.UserHomeDir()
