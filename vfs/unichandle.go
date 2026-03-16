@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"time"
@@ -296,28 +297,32 @@ func (fh *UnicFileHandle) close() (err error) {
 	}
 
 	if fh.isDirty {
-		fs.Debugf(fh.remote, "Fixes on file Detected, scheduling async upload")
-
 		// 필요한 변수들을 백그라운드 고루틴으로 넘기기 위해 변수에 캡쳐
 		remotePath := fh.remote
 		localPath := fh.localPath
 		vfsFile := fh.file
 		unicFs := fh.file.Fs().(*unic.Fs)
 
-		// 비동기 업로드 전, VFS가 현재 이 파일에 대해 관리하고 있는 '공식 시간'을 기억해둡니다. (Vim 경고 방지)
-		// os.Stat(localPath) 대신 vfsFile.ModTime()을 사용하여 VFS 시스템 내의 일관성을 유지합니다.
-		preservedModTime := vfsFile.ModTime()
-
-		// dis_upload 전에 메타데이터 기록
-		vfsFile.SetModTime(preservedModTime)
-		vfsFile.setSize(vfsFile.Size())
-
 		// 현재 로컬 파일 핸들은 즉시 닫아주어 Vim 등 다른 프로세스가 접근/삭제할 수 있게 놓아줌
 		if closeErr := fh.localFile.Close(); closeErr != nil {
 			fs.Errorf(fh.remote, "File Closing Failed: %v", closeErr)
 		}
 
+		// 비동기 업로드 전, cache의 modtime을 가져옴 (Vim 경고 방지)
+		info, _ := fh.localFile.Stat()
+		preservedModTime := info.ModTime()
+
+		// dis_upload 전에 메타데이터 기록
+		vfsFile.SetModTime(preservedModTime)
+		vfsFile.setSize(vfsFile.Size())
+
 		fh.isDirty = false
+
+		// 숨김파일, 백업파일일 경우 업로드 안함
+		if strings.HasPrefix(filepath.Base(localPath), ".") || strings.HasSuffix(localPath, "~") {
+			fmt.Printf("[%s] %s unichandle: close: hidden/backup file, skip upload\n", fh.remote, time.Now().Format("15:04:05.000"))
+			return nil
+		}
 
 		// 새로운 취소 가능한 컨텍스트 생성
 		ctx, cancel := context.WithCancel(context.Background())
@@ -393,10 +398,6 @@ func (fh *UnicFileHandle) close() (err error) {
 		}()
 
 		return nil
-	}
-
-	if closeErr := fh.localFile.Close(); closeErr != nil {
-		fs.Errorf(fh.remote, "File Closing Failed: %v", closeErr)
 	}
 
 	return nil
