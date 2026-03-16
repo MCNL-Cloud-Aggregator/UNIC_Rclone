@@ -163,6 +163,14 @@ func mount(VFS *vfs.VFS, mountPath string, opt *mountlib.Options) (<-chan error,
 
 	// unmount
 	unmount := func() error {
+		// Fs가 unic일 경우 unic backend cache 초기화
+		if fsys.name == "unic" {
+			err := fsys.ClearOSDefaultDownloadDir()
+			if err != nil {
+				return err
+			}
+		}
+
 		// Shutdown the VFS
 		fsys.VFS.Shutdown()
 		var umountOK bool

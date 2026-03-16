@@ -156,12 +156,15 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	f.features = features
 
 	// cache 초기화
-	defaultDownloadPath, err := f.MakeOSDefaultDownloadPath()
+	err = f.ClearOSDefaultDownloadDir()
 	if err != nil {
 		return nil, err
 	}
-	os.RemoveAll(defaultDownloadPath)
-	os.MkdirAll(defaultDownloadPath, 0755)
+
+	err = f.MakeOSDefaultDownloadDir()
+	if err != nil {
+		return nil, err
+	}
 
 	return f, nil
 }
@@ -803,6 +806,22 @@ func (o *Object) Storable() bool                                         { retur
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
 	o.modTime = t
 	return nil
+}
+
+// mount 시 캐시 초기화
+func (f *Fs) MakeOSDefaultDownloadDir() error {
+	defaultDownloadPath, _ := f.MakeOSDefaultDownloadPath()
+	err := os.MkdirAll(defaultDownloadPath, 0755)
+
+	return err
+}
+
+// unmount 시 캐시 초기화
+func (f *Fs) ClearOSDefaultDownloadDir() error {
+	defaultDownloadPath, _ := f.MakeOSDefaultDownloadPath()
+	err := os.RemoveAll(defaultDownloadPath)
+
+	return err
 }
 
 func (f *Fs) MakeOSDefaultDownloadPath() (string, error) {
