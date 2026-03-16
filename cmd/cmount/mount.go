@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/rclone/rclone/backend/unic"
 	"github.com/rclone/rclone/cmd/mountlib"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/lib/atexit"
@@ -163,6 +164,14 @@ func mount(VFS *vfs.VFS, mountPath string, opt *mountlib.Options) (<-chan error,
 
 	// unmount
 	unmount := func() error {
+		// Fs가 unic일 경우 unic backend cache 초기화
+		if unicFs, ok := f.(*unic.Fs); ok {
+			err := unicFs.ClearOSDefaultDownloadDir()
+			if err != nil {
+				return err
+			}
+		}
+
 		// Shutdown the VFS
 		fsys.VFS.Shutdown()
 		var umountOK bool
