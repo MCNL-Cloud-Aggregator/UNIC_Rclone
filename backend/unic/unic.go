@@ -155,6 +155,14 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	// Fs 객체에 features 저장
 	f.features = features
 
+	// cache 초기화
+	defaultDownloadPath, err := f.MakeOSDefaultDownloadPath()
+	if err != nil {
+		return nil, err
+	}
+	os.RemoveAll(defaultDownloadPath)
+	os.MkdirAll(defaultDownloadPath, 0755)
+
 	return f, nil
 }
 
@@ -795,6 +803,21 @@ func (o *Object) Storable() bool                                         { retur
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
 	o.modTime = t
 	return nil
+}
+
+func (f *Fs) MakeOSDefaultDownloadPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(
+		home,
+		"rclone",
+		"Download",
+		f.GetUserId(),
+		strings.Split(f.Name(), "{")[0],
+	), nil
 }
 
 func (f *Fs) MakeOSDownloadPath(remotePath string) (string, error) {
