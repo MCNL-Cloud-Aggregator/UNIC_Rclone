@@ -66,11 +66,13 @@ func newUnicFileHandle(d *Dir, f *File, flags int) (*UnicFileHandle, error) {
 		flags:     flags,
 		file:      f,
 		localPath: lPath,
-		isDirty:   !f.exists(),
+		isDirty:   false,
 	}
 
 	fh.cond = sync.Cond{L: &fh.mu}
-	fh.file.addWriter(fh)
+	if !fh.readOnly() {
+		fh.file.addWriter(fh)
+	}
 	return fh, nil
 }
 
@@ -100,7 +102,6 @@ func (f *File) removeUnic() error {
 func (f *File) openUnic(flags int) (fh *UnicFileHandle, err error) {
 	fmt.Printf("[%s] %s unichandle: openUnic: start\n", f.Path(), time.Now().Format("15:04:05.000"))
 	fmt.Printf("[%s] unichandle: vfsFile.modtime: %v\n", f.Path(), f.ModTime())
-	f.CancelPendingUpload()
 	f.mu.RLock()
 	d := f.d
 	f.mu.RUnlock()
@@ -206,7 +207,6 @@ func (fh *UnicFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
 // Implementation of WriteAt - call with lock held
 func (fh *UnicFileHandle) writeAt(p []byte, off int64) (n int, err error) {
 	fmt.Printf("[%s] %s unichandle: writeAt: start\n", fh.remote, time.Now().Format("15:04:05.000"))
-	fh.file.CancelPendingUpload()
 
 	if fh.closed {
 		return 0, ECLOSED
@@ -283,8 +283,10 @@ func (fh *UnicFileHandle) close() (err error) {
 	}
 	fh.closed = true
 
-	// leave writer open until file is transferred
-	defer fh.file.delWriter(fh)
+	if !fh.readOnly() {
+		// leave writer open until file is transferred
+		defer fh.file.delWriter(fh)
+	}
 
 	// If file not opened and not safe to truncate then leave file intact
 	if !fh.opened {
@@ -350,6 +352,7 @@ func (fh *UnicFileHandle) close() (err error) {
 			}
 
 			// 5초 대기 완료 후 실제 업로드 시작 시점
+			// 이제부터는 취소할 수 없도록 등록된 cancel 함수를 제거
 			vfsFile.mu.Lock()
 			// 만약 그 사이에 새로운 핸들이 열렸거나(nwriters > 0), 다른 이유로 cancelUpload가 바뀌었다면 중단
 			if vfsFile.nwriters.Load() > 0 {
@@ -475,7 +478,6 @@ func (fh *UnicFileHandle) Stat() (os.FileInfo, error) {
 // Truncate file to given size
 func (fh *UnicFileHandle) Truncate(size int64) (err error) {
 	fmt.Printf("[%s] %s unichandle: Truncate: start\n", fh.remote, time.Now().Format("15:04:05.000"))
-	fh.file.CancelPendingUpload()
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
 
@@ -560,7 +562,6 @@ func (fh *UnicFileHandle) ReadAt(p []byte, off int64) (n int, err error) {
 
 func (fh *UnicFileHandle) readAt(p []byte, off int64) (n int, err error) {
 	fmt.Printf("[%s] %s unichandle: readAt: start\n", fh.remote, time.Now().Format("15:04:05.000"))
-	fh.file.CancelPendingUpload()
 	if err := fh.openPending(); err != nil {
 		return 0, err
 	}
