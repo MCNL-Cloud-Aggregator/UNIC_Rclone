@@ -112,7 +112,7 @@ func MakeDataMap(originalFilePath string, backendRemote string, fileId string, d
 
 	jsonFilePath := getJsonFilePath()
 
-	originalFileName := filepath.Base(originalFilePath)
+	originalFileName := filepath.Base(backendRemote)
 	originalFileInfo, err := os.Stat(originalFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to stat original file: %v", err)
