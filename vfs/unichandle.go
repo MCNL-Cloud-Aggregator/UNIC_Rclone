@@ -303,18 +303,18 @@ func (fh *UnicFileHandle) close() (err error) {
 		vfsFile := fh.file
 		unicFs := fh.file.Fs().(*unic.Fs)
 
+		// 비동기 업로드 전, vfsFile의 메타데이터를 가져옴 (Vim 경고 방지)
+		preservedModTime := vfsFile.ModTime()
+		preservedSize := vfsFile.Size()
+
+		// dis_upload 전에 메타데이터 기록
+		vfsFile.SetModTime(preservedModTime)
+		vfsFile.setSize(preservedSize)
+
 		// 현재 로컬 파일 핸들은 즉시 닫아주어 Vim 등 다른 프로세스가 접근/삭제할 수 있게 놓아줌
 		if closeErr := fh.localFile.Close(); closeErr != nil {
 			fs.Errorf(fh.remote, "File Closing Failed: %v", closeErr)
 		}
-
-		// 비동기 업로드 전, cache의 modtime을 가져옴 (Vim 경고 방지)
-		info, _ := fh.localFile.Stat()
-		preservedModTime := info.ModTime()
-
-		// dis_upload 전에 메타데이터 기록
-		vfsFile.SetModTime(preservedModTime)
-		vfsFile.setSize(vfsFile.Size())
 
 		fh.isDirty = false
 
@@ -386,11 +386,9 @@ func (fh *UnicFileHandle) close() (err error) {
 
 			// 성공 시 부모 VFS File 객체에 정보 덮어쓰기
 			if newObj != nil && vfsFile != nil {
-				if !preservedModTime.IsZero() {
-					newObj.SetModTime(context.Background(), preservedModTime)
-				}
+				newObj.SetModTime(context.Background(), preservedModTime)
 				vfsFile.setObject(newObj)
-				vfsFile.setSize(newObj.Size())
+				vfsFile.setSize(preservedSize)
 
 				fmt.Printf("[%s] unichandle: vfsFile.modtime: %v\n", remotePath, vfsFile.ModTime())
 				fmt.Printf("[%s] unichandle: async upload complete: file size: %d\n", remotePath, vfsFile.Size())
