@@ -320,10 +320,12 @@ func (fh *UnicFileHandle) close() (err error) {
 
 		fh.isDirty = false
 
-		// 숨김파일, 백업파일일 경우 업로드 안함
-		if strings.HasPrefix(filepath.Base(localPath), ".") || strings.HasSuffix(localPath, "~") {
-			fmt.Printf("[%s] %s unichandle: close: hidden/backup file, skip upload\n", fh.remote, time.Now().Format("15:04:05.000"))
-			return nil
+		// 기존: 숨김파일, 백업파일일 경우 즉시 return nil (업로드 거부)
+		// 변경: 우분투 편집기 등 Atomic Save 동작(임시숨김파일 -> Rename)을 고려하여
+		// 5초 대기열에 무조건 넣되, 5초 뒤에 현재 경로가 여전히 숨김파일이면 그 때 업로드를 버림.
+		isInitiallyHidden := strings.HasPrefix(filepath.Base(localPath), ".") || strings.HasSuffix(localPath, "~")
+		if isInitiallyHidden {
+			fmt.Printf("[%s] %s unichandle: close: hidden/backup file detected. queued for async check.\n", fh.remote, time.Now().Format("15:04:05.000"))
 		}
 
 		// 새로운 취소 가능한 컨텍스트 생성
@@ -352,38 +354,38 @@ func (fh *UnicFileHandle) close() (err error) {
 			}
 
 			// 5초 대기 완료 후 실제 업로드 시작 시점
-			// 이제부터는 취소할 수 없도록 등록된 cancel 함수를 제거
 			vfsFile.mu.Lock()
-			// 만약 그 사이에 새로운 핸들이 열렸거나(nwriters > 0), 다른 이유로 cancelUpload가 바뀌었다면 중단
 			if vfsFile.nwriters.Load() > 0 {
 				fmt.Printf("[%s] unichandle: async upload deferred (file still has active writers) \n", remotePath)
 				vfsFile.cancelUpload = nil
 				vfsFile.mu.Unlock()
 				return
 			}
-
-			// 이제부터는 취소할 수 없도록 등록된 cancel 함수를 제거합니다.
 			vfsFile.cancelUpload = nil
-			vfsFile.mu.Unlock()
+			vfsFile.mu.Unlock() // 데드락 방지! Path() 호출 전 무조건 언락해야 합니다.
+
+			// 에디터의 rename 동작으로 인해 현재 파일 이름이 바뀌었을 수 있으므로 VFS File 객체의 최신 Path() 확인
+			currentRemotePath := vfsFile.Path()
 
 			if _, err := os.Stat(localPath); os.IsNotExist(err) {
 				fmt.Printf("[%s] unichandle: async upload skipped (file deleted)\n", remotePath)
 				return
 			}
 
-			fmt.Printf("[%s] unichandle: async upload started\n", remotePath)
+			fmt.Printf("[%s] unichandle: async upload started as [%s]\n", remotePath, currentRemotePath)
 
-			// Put_ 을 위해 파일을 새로 엽니다. (위에서 닫았기 때문)
+			// Put_ 을 위해 파일을 새로 엽니다.
 			uploadFile, err := os.Open(localPath)
 			if err != nil {
 				fs.Errorf(remotePath, "async upload failed to re-open local cache: %v", err)
 				return
 			}
-			defer uploadFile.Close()
 
-			newObj, uploadErr := unicFs.Put_(context.Background(), uploadFile, remotePath)
+			// 바뀐 이름(currentRemotePath)으로 클라우드에 업로드 수행!
+			newObj, uploadErr := unicFs.Put_(context.Background(), uploadFile, currentRemotePath)
+			uploadFile.Close()
 			if uploadErr != nil {
-				fs.Errorf(remotePath, "async upload failed: %v", uploadErr)
+				fs.Errorf(currentRemotePath, "async upload failed: %v", uploadErr)
 				return
 			}
 
@@ -393,8 +395,19 @@ func (fh *UnicFileHandle) close() (err error) {
 				vfsFile.setObject(newObj)
 				vfsFile.setSize(preservedSize)
 
-				fmt.Printf("[%s] unichandle: vfsFile.modtime: %v\n", remotePath, vfsFile.ModTime())
-				fmt.Printf("[%s] unichandle: async upload complete: file size: %d\n", remotePath, vfsFile.Size())
+				// 로컬 캐시 파일의 위치(이름)도 새로운 경로 이름에 맞게 Rename 처리 해주어,
+				// 나중에 동일 파일을 접근 시 다시 다운로드되지 않도록 맞춰줌
+				if currentRemotePath != remotePath {
+					if newLocalPath, err := unicFs.MakeOSDownloadPath(currentRemotePath); err == nil {
+						os.MkdirAll(filepath.Dir(newLocalPath), 0755)
+						if renameErr := os.Rename(localPath, newLocalPath); renameErr != nil {
+							fs.Debugf(currentRemotePath, "Failed to rename local cache file: %v", renameErr)
+						}
+					}
+				}
+
+				fmt.Printf("[%s] unichandle: vfsFile.modtime: %v\n", currentRemotePath, vfsFile.ModTime())
+				fmt.Printf("[%s] unichandle: async upload complete: file size: %d\n", currentRemotePath, vfsFile.Size())
 			}
 		}()
 
