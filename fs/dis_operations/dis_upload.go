@@ -193,7 +193,7 @@ func prepareUpload(absolutePath string, backendRemote string, fileId string, tar
 		return target.Remotes
 	}()
 
-	err = MakeDistributionDir(remotes)
+	err = MakeDistributionDir(remotes, fileId)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -313,7 +313,7 @@ func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string
 				continue
 			}
 
-			dest := fmt.Sprintf("%s:%s", shardInfo.Remote.Name, remoteDirectory)
+			dest := fmt.Sprintf("%s:%s/%s", shardInfo.Remote.Name, remoteDirectory, fileId)
 			source := filepath.Join(dir, hashedFileNameMap[shardInfo.DistributedFile])
 
 			// Upload file and calculate throughput
@@ -376,7 +376,7 @@ func startUploadFileGoroutine(fileId string, hashedFileNameMap map[string]string
 				return
 			}
 
-			dest := fmt.Sprintf("%s:%s", shardInfo.Remote.Name, remoteDirectory)
+			dest := fmt.Sprintf("%s:%s/%s", shardInfo.Remote.Name, remoteDirectory, fileId)
 			source := filepath.Join(dir, hashedFileNameMap[shardInfo.DistributedFile])
 
 			// Upload file and calculate throughput
@@ -403,11 +403,11 @@ func startUploadFileGoroutine(fileId string, hashedFileNameMap map[string]string
 	return nil
 }
 
-func MakeDistributionDir(remotes []config.Remote) (err error) {
+func MakeDistributionDir(remotes []config.Remote, fileId string) (err error) {
 	var wg sync.WaitGroup
 	var errs []error
 	for _, remote := range remotes {
-		argument := fmt.Sprintf("%s:%s", remote.Name, remoteDirectory)
+		argument := fmt.Sprintf("%s:%s/%s", remote.Name, remoteDirectory, fileId)
 		wg.Add(1)
 
 		go func(arg string) {
