@@ -405,6 +405,16 @@ func (f *File) ModTime() (modTime time.Time) {
 			}
 		}
 	}
+
+	// For UNIC backend, read the modtime from the local cache file if it exists
+	if unicFs, ok := d.f.(*unic.Fs); ok {
+		localPath, err := unicFs.MakeOSDownloadPath(f.Path())
+		if err == nil {
+			if stat, err := os.Stat(localPath); err == nil {
+				return f._roundModTime(stat.ModTime())
+			}
+		}
+	}
 	if !pendingModTime.IsZero() {
 		return f._roundModTime(pendingModTime)
 	}
@@ -439,6 +449,16 @@ func (f *File) Size() int64 {
 				fs.Errorf(f._path(), "Size: Item GetSize failed: %v", err)
 			} else {
 				return size
+			}
+		}
+	}
+
+	// For UNIC backend, read the size from the local cache file if it exists
+	if unicFs, ok := f.d.f.(*unic.Fs); ok {
+		localPath, err := unicFs.MakeOSDownloadPath(f._path())
+		if err == nil {
+			if stat, err := os.Stat(localPath); err == nil {
+				return stat.Size()
 			}
 		}
 	}
