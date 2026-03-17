@@ -373,6 +373,14 @@ func (fh *UnicFileHandle) close() (err error) {
 
 			// 에디터의 rename 동작으로 인해 현재 파일 이름이 바뀌었을 수 있으므로 VFS File 객체의 최신 Path() 확인
 			currentRemotePath := vfsFile.Path()
+
+			// VFS 트리 상에서 현재 자신이 이 경로의 최신 파생 객체인지 확인 (연속적인 Rename으로 덮어써졌을 경우 취소)
+			latestNode, statErr := vfsFile.VFS().Stat(currentRemotePath)
+			if statErr == nil && latestNode != vfsFile {
+				fmt.Printf("[%s] unichandle: async upload skipped (file superseded by a newer version due to rapid renames)\n", currentRemotePath)
+				return
+			}
+
 			currentLocalPath, errPath := unicFs.MakeOSDownloadPath(currentRemotePath)
 			if errPath != nil {
 				fs.Errorf(currentRemotePath, "async upload failed to get local path: %v", errPath)
