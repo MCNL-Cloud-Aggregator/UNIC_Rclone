@@ -309,7 +309,6 @@ func (fh *UnicFileHandle) close() (err error) {
 	if fh.isDirty {
 		// 필요한 변수들을 백그라운드 고루틴으로 넘기기 위해 변수에 캡쳐
 		remotePath := fh.remote
-		localPath := fh.localPath
 		vfsFile := fh.file
 		unicFs := fh.file.Fs().(*unic.Fs)
 
@@ -372,18 +371,23 @@ func (fh *UnicFileHandle) close() (err error) {
 			vfsFile.cancelUpload = nil
 			vfsFile.mu.Unlock() // 데드락 방지! Path() 호출 전 무조건 언락해야 합니다.
 
-			if _, err := os.Stat(localPath); os.IsNotExist(err) {
-				fmt.Printf("[%s] unichandle: async upload skipped (file deleted)\n", remotePath)
+			// 에디터의 rename 동작으로 인해 현재 파일 이름이 바뀌었을 수 있으므로 VFS File 객체의 최신 Path() 확인
+			currentRemotePath := vfsFile.Path()
+			currentLocalPath, errPath := unicFs.MakeOSDownloadPath(currentRemotePath)
+			if errPath != nil {
+				fs.Errorf(currentRemotePath, "async upload failed to get local path: %v", errPath)
 				return
 			}
 
-			// 에디터의 rename 동작으로 인해 현재 파일 이름이 바뀌었을 수 있으므로 VFS File 객체의 최신 Path() 확인
-			currentRemotePath := vfsFile.Path()
+			if _, err := os.Stat(currentLocalPath); os.IsNotExist(err) {
+				fmt.Printf("[%s] unichandle: async upload skipped (file deleted/not found at %s)\n", currentRemotePath, currentLocalPath)
+				return
+			}
 
 			fmt.Printf("[%s] unichandle: async upload started as [%s]\n", remotePath, currentRemotePath)
 
 			// Put_ 을 위해 파일을 새로 엽니다.
-			uploadFile, err := os.Open(localPath)
+			uploadFile, err := os.Open(currentLocalPath)
 			if err != nil {
 				fs.Errorf(remotePath, "async upload failed to re-open local cache: %v", err)
 				return

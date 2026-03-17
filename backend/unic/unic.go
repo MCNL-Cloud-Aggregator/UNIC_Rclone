@@ -710,6 +710,22 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 		return nil, err
 	}
 
+	// Rename local cache file
+	oldLocalPath, err1 := f.MakeOSDownloadPath(srcPath)
+	newLocalPath, err2 := f.MakeOSDownloadPath(remote)
+	if err1 == nil && err2 == nil {
+		if _, err := os.Stat(oldLocalPath); err == nil {
+			// Ensure the destination directory exists
+			os.MkdirAll(filepath.Dir(newLocalPath), 0755)
+			// Rename the local cache
+			if err := os.Rename(oldLocalPath, newLocalPath); err != nil {
+				fmt.Printf("UNIC: Move: failed to rename local cache file from %s to %s: %v\n", oldLocalPath, newLocalPath, err)
+			} else {
+				fmt.Printf("UNIC: Move: successfully renamed local cache file from %s to %s\n", oldLocalPath, newLocalPath)
+			}
+		}
+	}
+
 	return f.newObject(ctx, remote, movedNode)
 }
 
@@ -766,6 +782,21 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 	if err := os.Rename(tempPath, entrytable_path); err != nil {
 		os.Remove(tempPath)
 		return err
+	}
+
+	// Rename local cache directory
+	oldLocalDir, err1 := f.MakeOSDownloadPath(srcRemote)
+	newLocalDir, err2 := f.MakeOSDownloadPath(dstRemote)
+	if err1 == nil && err2 == nil {
+		if _, err := os.Stat(oldLocalDir); err == nil {
+			// Ensure the destination directory exists
+			os.MkdirAll(filepath.Dir(newLocalDir), 0755)
+			if err := os.Rename(oldLocalDir, newLocalDir); err != nil {
+				fmt.Printf("UNIC: DirMove: failed to rename local cache dir from %s to %s: %v\n", oldLocalDir, newLocalDir, err)
+			} else {
+				fmt.Printf("UNIC: DirMove: successfully renamed local cache dir from %s to %s\n", oldLocalDir, newLocalDir)
+			}
+		}
 	}
 
 	return nil
