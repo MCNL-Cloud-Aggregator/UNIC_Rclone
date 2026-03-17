@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"time"
@@ -320,13 +319,13 @@ func (fh *UnicFileHandle) close() (err error) {
 
 		fh.isDirty = false
 
-		// 기존: 숨김파일, 백업파일일 경우 즉시 return nil (업로드 거부)
-		// 변경: 우분투 편집기 등 Atomic Save 동작(임시숨김파일 -> Rename)을 고려하여
-		// 5초 대기열에 무조건 넣되, 5초 뒤에 현재 경로가 여전히 숨김파일이면 그 때 업로드를 버림.
-		isInitiallyHidden := strings.HasPrefix(filepath.Base(localPath), ".") || strings.HasSuffix(localPath, "~")
-		if isInitiallyHidden {
-			fmt.Printf("[%s] %s unichandle: close: hidden/backup file detected. queued for async check.\n", fh.remote, time.Now().Format("15:04:05.000"))
-		}
+		//// 기존: 숨김파일, 백업파일일 경우 즉시 return nil (업로드 거부)
+		//// 변경: 우분투 편집기 등 Atomic Save 동작(임시숨김파일 -> Rename)을 고려하여
+		//// 5초 대기열에 무조건 넣되, 5초 뒤에 현재 경로가 여전히 숨김파일이면 그 때 업로드를 버림.
+		//isInitiallyHidden := strings.HasPrefix(filepath.Base(localPath), ".") || strings.HasSuffix(localPath, "~")
+		//if isInitiallyHidden {
+		//	fmt.Printf("[%s] %s unichandle: close: hidden/backup file detected. queued for async check.\n", fh.remote, time.Now().Format("15:04:05.000"))
+		//}
 
 		// 새로운 취소 가능한 컨텍스트 생성
 		ctx, cancel := context.WithCancel(context.Background())
@@ -364,13 +363,13 @@ func (fh *UnicFileHandle) close() (err error) {
 			vfsFile.cancelUpload = nil
 			vfsFile.mu.Unlock() // 데드락 방지! Path() 호출 전 무조건 언락해야 합니다.
 
-			// 에디터의 rename 동작으로 인해 현재 파일 이름이 바뀌었을 수 있으므로 VFS File 객체의 최신 Path() 확인
-			currentRemotePath := vfsFile.Path()
-
 			if _, err := os.Stat(localPath); os.IsNotExist(err) {
 				fmt.Printf("[%s] unichandle: async upload skipped (file deleted)\n", remotePath)
 				return
 			}
+
+			// 에디터의 rename 동작으로 인해 현재 파일 이름이 바뀌었을 수 있으므로 VFS File 객체의 최신 Path() 확인
+			currentRemotePath := vfsFile.Path()
 
 			fmt.Printf("[%s] unichandle: async upload started as [%s]\n", remotePath, currentRemotePath)
 
@@ -382,33 +381,31 @@ func (fh *UnicFileHandle) close() (err error) {
 			}
 
 			// 바뀐 이름(currentRemotePath)으로 클라우드에 업로드 수행!
-			newObj, uploadErr := unicFs.Put_(context.Background(), uploadFile, currentRemotePath)
+			_, uploadErr := unicFs.Put_(context.Background(), uploadFile, currentRemotePath)
 			uploadFile.Close()
 			if uploadErr != nil {
 				fs.Errorf(currentRemotePath, "async upload failed: %v", uploadErr)
 				return
 			}
 
-			// 성공 시 부모 VFS File 객체에 정보 덮어쓰기
-			if newObj != nil && vfsFile != nil {
-				newObj.SetModTime(context.Background(), preservedModTime)
-				vfsFile.setObject(newObj)
-				vfsFile.setSize(preservedSize)
+			//// 성공 시 부모 VFS File 객체에 정보 덮어쓰기
+			//newObj.SetModTime(context.Background(), preservedModTime)
+			//vfsFile.setObject(newObj)
+			//vfsFile.setSize(preservedSize)
 
-				// 로컬 캐시 파일의 위치(이름)도 새로운 경로 이름에 맞게 Rename 처리 해주어,
-				// 나중에 동일 파일을 접근 시 다시 다운로드되지 않도록 맞춰줌
-				if currentRemotePath != remotePath {
-					if newLocalPath, err := unicFs.MakeOSDownloadPath(currentRemotePath); err == nil {
-						os.MkdirAll(filepath.Dir(newLocalPath), 0755)
-						if renameErr := os.Rename(localPath, newLocalPath); renameErr != nil {
-							fs.Debugf(currentRemotePath, "Failed to rename local cache file: %v", renameErr)
-						}
-					}
-				}
+			//// 로컬 캐시 파일의 위치(이름)도 새로운 경로 이름에 맞게 Rename 처리 해주어,
+			//// 나중에 동일 파일을 접근 시 다시 다운로드되지 않도록 맞춰줌
+			//if currentRemotePath != remotePath {
+			//	if newLocalPath, err := unicFs.MakeOSDownloadPath(currentRemotePath); err == nil {
+			//		os.MkdirAll(filepath.Dir(newLocalPath), 0755)
+			//		if renameErr := os.Rename(localPath, newLocalPath); renameErr != nil {
+			//			fs.Debugf(currentRemotePath, "Failed to rename local cache file: %v", renameErr)
+			//		}
+			//	}
+			//}
 
-				fmt.Printf("[%s] unichandle: vfsFile.modtime: %v\n", currentRemotePath, vfsFile.ModTime())
-				fmt.Printf("[%s] unichandle: async upload complete: file size: %d\n", currentRemotePath, vfsFile.Size())
-			}
+			fmt.Printf("[%s] unichandle: vfsFile.modtime: %v\n", currentRemotePath, vfsFile.ModTime())
+			fmt.Printf("[%s] unichandle: async upload complete: file size: %d\n", currentRemotePath, vfsFile.Size())
 		}()
 
 		return nil
@@ -485,6 +482,22 @@ func (fh *UnicFileHandle) Stat() (os.FileInfo, error) {
 	fmt.Printf("[%s] %s unichandle: Stat: start\n", fh.remote, time.Now().Format("15:04:05.000"))
 	fh.mu.Lock()
 	defer fh.mu.Unlock()
+
+	// 로컬 캐시 파일이 열려있는 경우 해당 파일의 정보를 반환
+	if fh.localFile != nil {
+		info, err := fh.localFile.Stat()
+		if err == nil {
+			return info, nil
+		}
+	}
+
+	// 열려있지 않더라도 캐시 경로의 정보를 반환
+	info, err := os.Stat(fh.localPath)
+	if err == nil {
+		return info, nil
+	}
+
+	// 에러 시 vfs.File 정보를 롤백 (vfs.File은 os.FileInfo 인터페이스를 만족)
 	return fh.file, nil
 }
 
