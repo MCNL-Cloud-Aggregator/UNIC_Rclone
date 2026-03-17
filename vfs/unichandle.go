@@ -94,7 +94,16 @@ func (f *File) removeUnic() error {
 	defer f.mu.Unlock()
 
 	if f.o != nil {
-		return f.o.Remove(context.TODO())
+		o := f.o  // capture the object for the goroutine
+		f.o = nil // Prevent further operations on this object
+		go func() {
+			err := o.Remove(context.Background())
+			if err != nil {
+				fs.Errorf(o.Remote(), "async remove failed: %v", err)
+			} else {
+				fmt.Printf("[%s] unichandle: async remove complete\n", o.Remote())
+			}
+		}()
 	}
 	return nil
 }
