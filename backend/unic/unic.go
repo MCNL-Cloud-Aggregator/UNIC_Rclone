@@ -92,9 +92,9 @@ type NodeEntry struct {
 	Path string   `json:"path"`
 	Type NodeType `json:"type"`
 
-	Size int64 `json:"size"` // size of the object
-	//ModTime time.Time `json:"modtime"` // modification time of the object
-	Items int64 `json:"items"` // number of objects or -1 for unknown
+	Size    int64     `json:"size"`    // size of the object
+	ModTime time.Time `json:"modtime"` // modification time of the object
+	Items   int64     `json:"items"`   // number of objects or -1 for unknown
 }
 
 func (t NodeType) Valid() bool {
