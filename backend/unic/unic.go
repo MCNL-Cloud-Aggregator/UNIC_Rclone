@@ -72,11 +72,12 @@ type Object struct {
 
 // Directory describes a OneDrive directory
 type Directory struct {
-	fs     *Fs    // what this object is part of
-	id     string // dir ID
-	remote string // The remote path
-	size   int64  // size of directory and contents or -1 if unknown
-	items  int64  // number of objects or -1 for unknown
+	fs      *Fs       // what this object is part of
+	id      string    // dir ID
+	remote  string    // The remote path
+	size    int64     // size of directory and contents or -1 if unknown
+	items   int64     // number of objects or -1 for unknown
+	modTime time.Time // modification time of the object
 }
 
 type NodeType string
@@ -225,11 +226,12 @@ func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
 
 func (f *Fs) newDir(node NodeEntry) (entry fs.Directory, err error) {
 	d := &Directory{
-		fs:     f,
-		id:     node.Id,
-		remote: node.Path,
-		size:   -1,
-		items:  -1,
+		fs:      f,
+		id:      node.Id,
+		remote:  node.Path,
+		size:    -1,
+		items:   -1,
+		modTime: node.ModTime,
 	}
 	return d, nil
 }
@@ -1080,7 +1082,7 @@ func (d *Directory) Remote() string {
 }
 
 func (d *Directory) ModTime(context.Context) time.Time {
-	return time.Time{}
+	return d.modTime
 }
 
 func (d *Directory) Size() int64 {
