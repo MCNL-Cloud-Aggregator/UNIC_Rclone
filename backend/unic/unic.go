@@ -72,11 +72,12 @@ type Object struct {
 
 // Directory describes a OneDrive directory
 type Directory struct {
-	fs     *Fs    // what this object is part of
-	id     string // dir ID
-	remote string // The remote path
-	size   int64  // size of directory and contents or -1 if unknown
-	items  int64  // number of objects or -1 for unknown
+	fs      *Fs       // what this object is part of
+	id      string    // dir ID
+	remote  string    // The remote path
+	size    int64     // size of directory and contents or -1 if unknown
+	items   int64     // number of objects or -1 for unknown
+	modTime time.Time // modification time of the object
 }
 
 type NodeType string
@@ -92,9 +93,9 @@ type NodeEntry struct {
 	Path string   `json:"path"`
 	Type NodeType `json:"type"`
 
-	Size int64 `json:"size"` // size of the object
-	//ModTime time.Time `json:"modtime"` // modification time of the object
-	Items int64 `json:"items"` // number of objects or -1 for unknown
+	Size    int64     `json:"size"`    // size of the object
+	ModTime time.Time `json:"modtime"` // modification time of the object
+	Items   int64     `json:"items"`   // number of objects or -1 for unknown
 }
 
 func (t NodeType) Valid() bool {
@@ -225,11 +226,12 @@ func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
 
 func (f *Fs) newDir(node NodeEntry) (entry fs.Directory, err error) {
 	d := &Directory{
-		fs:     f,
-		id:     node.Id,
-		remote: node.Path,
-		size:   -1,
-		items:  -1,
+		fs:      f,
+		id:      node.Id,
+		remote:  node.Path,
+		size:    -1,
+		items:   -1,
+		modTime: node.ModTime,
 	}
 	return d, nil
 }
@@ -498,6 +500,8 @@ func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...f
 	} else {
 		// 새롭게 생성되는 파일(또는 Rename 된 이후 새로 쓰이는 임시/원본 파일)의 경우 ID 충돌이 나지 않도록 유니크한 조합 사용
 		fileID = generateHash(remote)
+		// 완전히 새로운 파일이 생성될 때만 부모 디렉토리의 수정시간 갱신
+		_ = updateParentDirModTime(remote, time.Now())
 	}
 
 	fmt.Printf("[%s] UNIC: Put_: dis_upload start\n", remote)
@@ -527,6 +531,53 @@ func generateHash(remotePath string) string {
 	return fileID
 }
 
+// 부모 디렉토리의 수정시간을 갱신하는 함수
+func updateParentDirModTime(childPath string, t time.Time) error {
+	parentPath := path.Dir(childPath)
+	if parentPath == "" || parentPath == "." || parentPath == "/" {
+		return nil
+	}
+
+	oldFile, err := os.OpenFile(entrytable_path, os.O_RDWR, 0755)
+	if err != nil {
+		return err
+	}
+	defer oldFile.Close()
+
+	tempPath := entrytable_path + ".tmp." + fmt.Sprintf("%d", time.Now().UnixNano())
+	newFile, err := os.Create(tempPath)
+	if err != nil {
+		return err
+	}
+	defer newFile.Close()
+
+	decoder := json.NewDecoder(oldFile)
+	encoder := json.NewEncoder(newFile)
+
+	for {
+		var node NodeEntry
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		if node.Path == parentPath && node.Type == "dir" {
+			node.ModTime = t
+		}
+
+		if err := encoder.Encode(node); err != nil {
+			return err
+		}
+	}
+
+	oldFile.Close()
+	newFile.Close()
+
+	return os.Rename(tempPath, entrytable_path)
+}
+
 // UNIC을 마운팅한 mount point에 mkdir system call이 들어올 때 실행
 func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 	fmt.Printf("%s UNIC: Mkdir: Mkdir method Start\n", time.Now().Format("15:04:05.000"))
@@ -547,12 +598,17 @@ func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 	node.Items = 0
 	node.Size = 0
 	node.Type = "dir"
+	node.ModTime = time.Now() // 디렉토리 생성 시간 지정
 
 	// update entrytable
 	encoder := json.NewEncoder(entryTable)
 	if err := encoder.Encode(node); err != nil {
 		return err
 	}
+	entryTable.Close()
+
+	// 부모 디렉토리의 수정시간 갱신 (mkdir)
+	_ = updateParentDirModTime(dirPath, node.ModTime)
 
 	return nil
 }
@@ -595,6 +651,9 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 			return fmt.Errorf("entrytable.jsonl type error\n")
 		}
 	}
+
+	// 삭제 완료 후 부모 디렉토리 수정시간 갱신 (rmdir)
+	_ = updateParentDirModTime(dir, time.Now())
 
 	return nil
 }
@@ -1004,6 +1063,9 @@ func (o *Object) Remove(ctx context.Context) error {
 
 	//fmt.Println("UNIC: Remove: Remove Success")
 
+	// 파일 삭제 후 부모 디렉토리 수정시간 갱신 (unlink)
+	_ = updateParentDirModTime(o.remote, time.Now())
+
 	return nil
 }
 
@@ -1020,7 +1082,7 @@ func (d *Directory) Remote() string {
 }
 
 func (d *Directory) ModTime(context.Context) time.Time {
-	return time.Time{}
+	return d.modTime
 }
 
 func (d *Directory) Size() int64 {

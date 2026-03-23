@@ -137,6 +137,7 @@ func MakeDataMap(originalFilePath string, backendRemote string, fileId string, d
 		FileName:             originalFileName,
 		FilePath:             backendRemote,
 		FileSize:             originalFileInfo.Size(),
+		ModTime:              originalFileInfo.ModTime(),
 		DisFileSize:          disFileSize,
 		Shard:                shard,
 		Parity:               parity,
