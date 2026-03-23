@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	mathrand "math/rand"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -639,7 +641,24 @@ func CreateRemote(ctx context.Context, name string, Type string, keyValues rc.Pa
 		LoadedData().SetValue(name, "type", Type)
 	}
 	// Set the remaining values
-	return UpdateRemote(ctx, name, keyValues, opts)
+	out, err = UpdateRemote(ctx, name, keyValues, opts)
+	if err != nil {
+		return out, err
+	}
+
+	tokenStr, found := FileGetValue(name, "token")
+
+	if found && tokenStr != "" {
+		email := fetchEmailFromCloudAPI(Type, tokenStr)
+
+		if email != "" {
+			FileSetValue(name, "email", email)
+			SaveConfig()
+
+			fmt.Printf("[UNIC] Successfully added email '%s' to remote '%s'\n", email, name)
+		}
+	}
+	return out, nil
 }
 
 // PasswordRemote adds the keyValues passed in to the remote of name.
@@ -780,4 +799,132 @@ func SetTempDir(path string) (err error) {
 		return os.Setenv("TMPDIR", tempDir)
 	}
 	return nil
+}
+
+type tokenInfo struct {
+	AccessToken string `json:"access_token"`
+}
+
+func fetchEmailFromCloudAPI(remoteType string, tokenStr string) string {
+	// 1. token 문자열(JSON)에서 access_token만 예쁘게 뽑아냅니다.
+	var token tokenInfo
+	if err := json.Unmarshal([]byte(tokenStr), &token); err != nil {
+		fmt.Printf("[UNIC Error] Failed to parse token JSON for %s: %v\n", remoteType, err)
+		return ""
+	}
+
+	accessToken := token.AccessToken
+	if accessToken == "" {
+		return ""
+	}
+
+	// HTTP 요청을 위한 클라이언트 세팅 (무한 대기 방지용 10초 타임아웃)
+	client := &http.Client{Timeout: 10 * time.Second}
+	var resp *http.Response
+	var err error
+
+	// 2. 클라우드 타입(remoteType)에 따라 다른 API 주소와 방식을 세팅합니다.
+	maxRetries := 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		var req *http.Request
+
+		// 루프 안에서 매번 새롭고 깨끗한 Request(요청)를 생성합니다.
+		switch remoteType {
+		case "drive":
+			req, err = http.NewRequest("GET", "https://www.googleapis.com/drive/v3/about?fields=user", nil)
+			if err == nil {
+				req.Header.Set("Authorization", "Bearer "+accessToken)
+			}
+		case "dropbox":
+			req, err = http.NewRequest("POST", "https://api.dropboxapi.com/2/users/get_current_account", strings.NewReader("null"))
+			if err == nil {
+				req.Header.Set("Authorization", "Bearer "+accessToken)
+				req.Header.Set("Content-Type", "application/json")
+			}
+		case "onedrive":
+			req, err = http.NewRequest("GET", "https://graph.microsoft.com/v1.0/drive", nil)
+			if err == nil {
+				req.Header.Set("Authorization", "Bearer "+accessToken)
+			}
+		default:
+			return ""
+		}
+
+		if err != nil {
+			fmt.Printf("[UNIC Error] Failed to create request for %s: %v\n", remoteType, err)
+			return ""
+		}
+
+		// API 찌르기
+		resp, err = client.Do(req)
+		if err != nil {
+			fmt.Printf("[UNIC Error] HTTP request failed for %s: %v\n", remoteType, err)
+			return ""
+		}
+
+		// 🎯 429 Too Many Requests 방어 로직
+		if resp.StatusCode == 429 {
+			resp.Body.Close() // 닫아주고 다시 시도 준비
+			fmt.Printf("[UNIC Warning] 429 Rate Limit hit for %s. Retrying in 2 seconds... (%d/%d)\n", remoteType, attempt, maxRetries)
+			time.Sleep(2 * time.Second) // 2초 대기 후 다시 루프(continue)
+			continue
+		}
+
+		// 429가 아니고 정상(200번대)이거나 아예 다른 에러면 루프 탈출
+		break
+	}
+
+	if resp == nil {
+		return ""
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		fmt.Printf("[UNIC Error] API returned error for %s. Status: %d\n", remoteType, resp.StatusCode)
+		return ""
+	}
+
+	// 5. JSON 응답에서 이메일 필드만 쏙 빼내기
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		fmt.Printf("[UNIC Error] Failed to parse API response for %s\n", remoteType)
+		return ""
+	}
+
+	// 클라우드별로 이메일이 들어있는 JSON Key가 다름
+	switch remoteType {
+	case "drive":
+		if userObj, ok := result["user"].(map[string]interface{}); ok {
+			if email, ok := userObj["emailAddress"].(string); ok {
+				return email
+			}
+		}
+
+	case "dropbox":
+		if email, ok := result["email"].(string); ok {
+			return email
+		}
+
+	case "onedrive":
+		if ownerObj, ok := result["owner"].(map[string]interface{}); ok {
+			if userObj, ok := ownerObj["user"].(map[string]interface{}); ok {
+
+				// 1순위: email 필드 확인
+				if email, ok := userObj["email"].(string); ok && email != "" {
+					return email
+				}
+				// 2순위: email이 비어있으면 userPrincipalName 확인 (MS 계정 특성)
+				if upn, ok := userObj["userPrincipalName"].(string); ok && upn != "" {
+					return upn
+				}
+				// 3순위: 둘 다 없으면 이름(displayName)이라도 가져오기
+				if displayName, ok := userObj["displayName"].(string); ok && displayName != "" {
+					return displayName
+				}
+			}
+		}
+	}
+
+	return ""
 }
