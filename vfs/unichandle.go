@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"time"
@@ -373,6 +374,12 @@ func (fh *UnicFileHandle) close() (err error) {
 
 			// 에디터의 rename 동작으로 인해 현재 파일 이름이 바뀌었을 수 있으므로 VFS File 객체의 최신 Path() 확인
 			currentRemotePath := vfsFile.Path()
+
+			// 5초 대기 후에도 여전히 숨김 파일이거나 백업 파일인 경우 업로드를 취소
+			if strings.HasPrefix(filepath.Base(currentRemotePath), ".") || strings.HasSuffix(currentRemotePath, "~") {
+				fmt.Printf("[%s] unichandle: async upload skipped (hidden/backup file detected after 5s)\n", currentRemotePath)
+				return
+			}
 
 			// VFS 트리 상에서 현재 자신이 이 경로의 최신 파생 객체인지 확인 (연속적인 Rename으로 덮어써졌을 경우 취소)
 			latestNode, statErr := vfsFile.VFS().Stat(currentRemotePath)
