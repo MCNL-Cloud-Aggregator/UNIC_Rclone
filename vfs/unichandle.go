@@ -378,6 +378,8 @@ func (fh *UnicFileHandle) close() (err error) {
 			// 5초 대기 후에도 여전히 숨김 파일이거나 백업 파일인 경우 업로드를 취소
 			if strings.HasPrefix(filepath.Base(currentRemotePath), ".") || strings.HasSuffix(currentRemotePath, "~") {
 				fmt.Printf("[%s] unichandle: async upload skipped (hidden/backup file detected after 5s)\n", currentRemotePath)
+				// 로컬 캐시 구조 및 VFS 트리 상에서 해당 숨김 파일 완벽히 제거
+				vfsFile.Remove()
 				return
 			}
 
