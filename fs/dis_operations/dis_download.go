@@ -247,7 +247,7 @@ func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mu
 		return err
 	}
 
-	source := fmt.Sprintf("%s:%s/%s", fileInfo.Remote.Name, remoteDirectory, hashedFileName)
+	source := fmt.Sprintf("%s:%s/%s/%s", fileInfo.Remote.Name, remoteDirectory, fileId, hashedFileName)
 	fmt.Printf("Downloading shard %s to %s\n", source, shardDir)
 	downloadedFilePath := path.Join(shardDir, hashedFileName)
 	fmt.Printf("downloadedFilePath: %s\n", downloadedFilePath)

@@ -115,7 +115,7 @@ func startRmFileGoroutine(fileId string, distributedFileArray []DistributedFile)
 				errCh <- fmt.Errorf("failed to calculate hash %v", err)
 			}
 
-			remotePath := fmt.Sprintf("%s:%s/%s", info.Remote.Name, remoteDirectory, hashedFileName)
+			remotePath := fmt.Sprintf("%s:%s/%s/%s", info.Remote.Name, remoteDirectory, fileId, hashedFileName)
 
 			if err := remoteCallDeleteFile([]string{PERM_DEL_FLAG, remotePath}); err != nil {
 				errCh <- fmt.Errorf("failed to delete %s on remote %s: %w", info.DistributedFile, info.Remote.Name, err)
