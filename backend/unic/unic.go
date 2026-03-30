@@ -601,6 +601,9 @@ func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 	node.ModTime = time.Now() // 디렉토리 생성 시간 지정
 
 	// update entrytable
+	if fi, err := entryTable.Stat(); err == nil && fi.Size() > 0 {
+		_, _ = entryTable.WriteString("\n")
+	}
 	encoder := json.NewEncoder(entryTable)
 	if err := encoder.Encode(node); err != nil {
 		return err
