@@ -179,6 +179,7 @@ func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.
 	if node != nil {
 		o.id = node.Id
 		o.size = node.Size
+		o.modTime = node.ModTime
 	} else {
 		foundNode, err := f.findNodeFromTable(remote)
 		if err != nil {
@@ -187,6 +188,7 @@ func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.
 
 		o.id = foundNode.Id
 		o.size = foundNode.Size
+		o.modTime = foundNode.ModTime
 	}
 	return o, err
 }
