@@ -17,6 +17,7 @@ import (
 
 var jsonFileMutex sync.Mutex
 var datamap_file_name = "datamap.json"
+var UseSharingJson bool = false // Set to true to read from sharing.json
 
 // calculating checksum of file
 func calculateChecksum(filePath string) (string, error) {
@@ -36,6 +37,9 @@ func calculateChecksum(filePath string) (string, error) {
 // getting path existing json file
 func getJsonFilePath() string {
 	path := GetRcloneDirPath()
+	if UseSharingJson {
+		return filepath.Join(path, "sharing.json")
+	}
 	return filepath.Join(path, "data", datamap_file_name)
 }
 
@@ -490,9 +494,9 @@ func CheckFlagAndState() (bool, string, string) {
 		fmt.Printf("failed to read json file at checkflag func")
 	}
 
-	for _, info := range filesMap {
+	for fileId, info := range filesMap {
 		if info.Flag {
-			return info.Flag, info.State, info.FileName
+			return info.Flag, info.State, fileId
 		}
 	}
 	return false, "", ""

@@ -32,6 +32,8 @@ type FileInfo struct {
 	State                string                     `json:"state"`
 	Checksum             string                     `json:"checksum"`
 	Padding              int64                      `json:"padding_amount"`
+	Password             string                     `json:"password,omitempty"`     // Added for shared decryption
+	DriveIdMap           map[string]string          `json:"drive_id,omitempty"`     // Add DriveIdMap for shared file downloads
 	DistributedFileInfos map[string]DistributedFile `json:"distributed_file_infos"`
 }
 
