@@ -248,11 +248,10 @@ func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mu
 		fmt.Printf("[Shared Download] 타겟 Drive ID(%s)로 직접 접근합니다: %s\n", targetDriveId, source)
 	} else if len(driveIdMap) > 0 && fileInfo.Remote.Type == "drive" {
 		// 🌟 강현님 요청사항: 우선 하드코딩으로 동작하는지 Google Drive API 테스트
-		hardcodedGoogleId := "1M7yo0pGJZ-UG4OfM5K_fYuVcGpD53u0c"
 
 		source = fmt.Sprintf("%s,root_folder_id='%s':%s",
-			fileInfo.Remote.Name, hardcodedGoogleId, hashedFileName)
-		fmt.Printf("[Shared Download] 🧪 Google Drive 하드코딩 테스트 ID(%s)로 직접 접근: %s\n", hardcodedGoogleId, source)
+			fileInfo.Remote.Name, targetDriveId, hashedFileName)
+		fmt.Printf("[Shared Download] 🧪 Google Drive 하드코딩 테스트 ID(%s)로 직접 접근: %s\n", targetDriveId, source)
 	} else {
 		// 공유받은 drive_id가 없거나 일반 리모트일 경우 (기존 방식)
 		source = fmt.Sprintf("%s:%s/%s/%s",
