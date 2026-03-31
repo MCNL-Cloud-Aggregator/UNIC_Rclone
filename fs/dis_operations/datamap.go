@@ -38,7 +38,7 @@ func calculateChecksum(filePath string) (string, error) {
 func getJsonFilePath() string {
 	path := GetRcloneDirPath()
 	if UseSharingJson {
-		return filepath.Join(path, "sharing.json")
+		return filepath.Join(path, "data", "sharing.json")
 	}
 	return filepath.Join(path, "data", datamap_file_name)
 }

@@ -228,6 +228,7 @@ func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, fileId s
 func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mutex, errs *[]error, driveIdMap map[string]string, folderIdMap map[string]string) error {
 	startTime := time.Now()
 
+	fmt.Printf("fileInfo.DistributedFile: %s\n", fileInfo.DistributedFile)
 	hashedFileName, err := CalculateHash(fileInfo.DistributedFile)
 	if err != nil {
 		mu.Lock()
@@ -241,16 +242,20 @@ func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mu
 	// 🌟 [핵심 변경] sharing.json(또는 FileInfo)에서 받아온 drive_id가 있는지 확인합니다.
 	targetDriveId, hasSharedDriveId := driveIdMap[fileInfo.Remote.Name]
 	targetFolderId, hasSharedFolderId := folderIdMap[fileInfo.Remote.Name]
+	fmt.Printf("folderIdMap: %v\n", folderIdMap)
 
 	if hasSharedDriveId && fileInfo.Remote.Type == "onedrive" {
-		// 상대방의 drive_id로 직접 접근하도록 Rclone Connection String 문법 적용
-		source = fmt.Sprintf("%s,drive_id='%s':%s/%s/%s",
-			fileInfo.Remote.Name, targetDriveId, remoteDirectory, fileId, hashedFileName)
-		fmt.Printf("[Shared Download] 타겟 Drive ID(%s)로 직접 접근합니다: %s\n", targetDriveId, source)
+		actualDriveId := targetDriveId
+		if strings.Contains(targetFolderId, "!") {
+			actualDriveId = strings.Split(targetFolderId, "!")[0]
+		}
+
+		// 🌟 [핵심 수정] 잃어버렸던 remoteDirectory와 fileId 경로를 다시 복구합니다!
+		source = fmt.Sprintf("%s,drive_id=%s,root_folder_id=%s:",
+			fileInfo.Remote.Name, actualDriveId, targetFolderId)
 	} else if hasSharedFolderId && fileInfo.Remote.Type == "drive" {
 		source = fmt.Sprintf("%s,root_folder_id='%s':%s",
 			fileInfo.Remote.Name, targetFolderId, hashedFileName)
-		fmt.Printf("[Shared Download] 🧪 Google Drive 하드코딩 테스트 ID(%s)로 직접 접근: %s\n", targetDriveId, source)
 	} else {
 		source = fmt.Sprintf("%s:%s/%s/%s",
 			fileInfo.Remote.Name, remoteDirectory, fileId, hashedFileName)
