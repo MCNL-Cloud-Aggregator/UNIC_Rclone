@@ -10,6 +10,7 @@ import (
 
 func init() {
 	cmd.Root.AddCommand(commandDefinition)
+	commandDefinition.Flags().BoolVar(&dis_operations.UseSharingJson, "shared", false, "Set to true to read from sharing.json instead of datamap.json")
 }
 
 var commandDefinition = &cobra.Command{
@@ -40,7 +41,7 @@ To erase the files, use the dis_rm command instead.
 		"groups": "Copy,Filter,Listing,Important",
 	},
 	Run: func(command *cobra.Command, args []string) {
-		cmd.CheckArgs(2, 2, command, args)
+		cmd.CheckArgs(3, 3, command, args)
 		cmd.Run(true, true, command, func() error {
 			sameCommand, err := dis_operations.CheckState("download", args, dis_operations.None) // use default lb, its not going to be used anyways
 			if err != nil {

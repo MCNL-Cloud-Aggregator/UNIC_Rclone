@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,7 +24,7 @@ var copyCommandDefinitionForDown = &cobra.Command{
 		"groups": "Copy,Filter,Listing,Important",
 	},
 	Run: func(command *cobra.Command, args []string) {
-		cmd.CheckArgs(2, 2, command, args)
+		cmd.CheckArgs(3, 3, command, args)
 		fsrc, srcFileName, fdst := cmd.NewFsSrcFileDst(args)
 		cmd.RunWithSustainOS(true, true, command, func() error {
 			if srcFileName == "" {
@@ -40,7 +41,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 
 	fileId := args[0]
 	fmt.Printf("Dis_Download fileId: %s\n", fileId)
-	_, err = GetFileInfoStruct(fileId)
+	fileInfoForDriveId, err := GetFileInfoStruct(fileId)
 	if err != nil {
 		return err
 	}
@@ -71,7 +72,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 
 	start := time.Now()
 	fmt.Printf("---startDownloadFileGoroutine_Worker start---\n")
-	if err := startDownloadFileGoroutine_Worker(distributedFileInfos, fileId, 32); err != nil {
+	if err := startDownloadFileGoroutine_Worker(distributedFileInfos, fileId, 32, fileInfoForDriveId.DriveIdMap); err != nil {
 		return err
 	}
 	fmt.Printf("---startDownloadFileGoroutine_Worker end---\n")
@@ -101,8 +102,15 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 	//os.Exit(1)
 	fmt.Printf("---DoDecode start---\n")
 	fmt.Printf("Dis_Download backendRemote2: %s\n", fileId)
-	//originalFileName := filepath.Base(backendRemote)
-	err = reedsolomon.DoDecode(fileId, args[2], absolutePath, fileInfo.Padding, checksums, fileInfo.Shard, fileInfo.Parity, TryGetPassword())
+
+	passwordToUse := fileInfo.Password
+	if passwordToUse == "" {
+		passwordToUse = TryGetPassword()
+	}
+
+	//=originalFileName := filepath.Base(backendRemote)
+	fmt.Printf("Dis_Download args[2]: %s\n", args[2])
+	err = reedsolomon.DoDecode(fileId, args[2], absolutePath, fileInfo.Padding, checksums, fileInfo.Shard, fileInfo.Parity, passwordToUse)
 	if err != nil {
 		result := ShowDescription_RemoveFile(fileId, err)
 		if result {
@@ -133,7 +141,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 	return nil
 }
 
-func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, fileId string, workerCount int) (err error) {
+func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, fileId string, workerCount int, driveIdMap map[string]string) (err error) {
 	fmt.Printf("\n========================================================\n")
 	fmt.Printf("[DL-Pool] 🚀 다운로드 워커 풀 시작! (파일 ID: %s, 워커 수: %d, 파편 수: %d)\n", fileId, workerCount, len(distributedFileInfos))
 	fmt.Printf("========================================================\n")
@@ -150,66 +158,47 @@ func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, f
 
 	jobs := make(chan DistributedFile, len(distributedFileInfos))
 
-	// ★ 워커 함수 수정: workerID를 받아서 누가 어떤 일을 하는지 추적합니다.
-	downloader := func(workerID int) {
-		fmt.Printf("[DL-Worker-%d] 🟢 워커 생성됨! 대기열(Jobs)에서 작업 기다리는 중...\n", workerID)
+	downloader := func() {
 
 		defer func() {
-			fmt.Printf("[DL-Worker-%d] 🔴 워커 종료됨! (wg.Done 호출)\n", workerID)
 			wg.Done()
 		}()
 
 		for fileInfo := range jobs {
-			fmt.Printf("[DL-Worker-%d] 📥 작업 시작: Remote '%s' 에서 파편 다운로드 시도 (경로: %s)\n", workerID, fileInfo.Remote.Name, fileInfo.DistributedFile)
-
-			jobStart := time.Now()
 
 			// 실제 다운로드 함수 호출
-			err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs)
+			err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs, driveIdMap)
 
 			if err != nil {
-				fmt.Printf("[DL-Worker-%d] ❌ 작업 실패: Remote '%s' (소요시간: %v) - 사유: %v\n", workerID, fileInfo.Remote.Name, time.Since(jobStart), err)
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("failed to download shard from %s: %v", fileInfo.Remote.Name, err))
 				mu.Unlock()
-			} else {
-				fmt.Printf("[DL-Worker-%d] ✅ 작업 성공: Remote '%s' 다운로드 완료 (소요시간: %v)\n", workerID, fileInfo.Remote.Name, time.Since(jobStart))
 			}
 		}
 	}
 
 	// Start worker goroutines
-	fmt.Printf("[DL-Pool] 👷 워커 %d개 생성 시작...\n", workerCount)
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		go downloader(i) // 워커 번호(0, 1, 2...)를 넘겨줍니다.
+		go downloader()
 	}
 
 	// Send jobs to workers
-	fmt.Printf("[DL-Pool] 📤 작업 대기열(Channel)에 %d개 파편 할당 중...\n", len(distributedFileInfos))
-	for i, fileInfo := range distributedFileInfos {
+	for _, fileInfo := range distributedFileInfos {
 		jobs <- fileInfo
-		fmt.Printf("[DL-Pool] 📋 %d번째 파편 할당 완료: %s\n", i+1, fileInfo.Remote.Name)
 	}
-
-	fmt.Printf("[DL-Pool] 🔒 작업 할당 완료. Jobs 채널 닫음 (Close)\n")
 	close(jobs) // Close channel to signal workers
 
-	fmt.Printf("[DL-Pool] ⏳ 모든 워커가 끝날 때까지 대기합니다... (wg.Wait 시작)\n")
-	waitStart := time.Now()
 	wg.Wait() // Wait for all workers to finish
-	fmt.Printf("[DL-Pool] 🔓 wg.Wait() 통과 완료! 모든 워커 정상 복귀! (대기시간: %v)\n", time.Since(waitStart))
 
 	if len(errs) > 0 {
-		fmt.Printf("[DL-Pool] ⚠️ 다운로드 풀 종료 (에러 %d개 발생)\n", len(errs))
 		return fmt.Errorf("download completed with %d errors. First error: %w", len(errs), errs[0])
 	}
 
-	fmt.Printf("[DL-Pool] 🎉 다운로드 풀 완벽하게 종료 (에러 없음)\n\n")
 	return nil
 }
 
-func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, fileId string) (err error) {
+func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, fileId string, driveIdMap map[string]string) (err error) {
 	shardDir, err := reedsolomon.GetShardDir()
 	if err != nil {
 		return err
@@ -223,7 +212,7 @@ func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, fileId s
 		wg.Add(1)
 		go func(fileInfo DistributedFile) {
 			defer wg.Done()
-			if err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs); err != nil {
+			if err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs, driveIdMap); err != nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
@@ -236,7 +225,7 @@ func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, fileId s
 	return nil
 }
 
-func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mutex, errs *[]error) error {
+func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mutex, errs *[]error, driveIdMap map[string]string) error {
 	startTime := time.Now()
 
 	hashedFileName, err := CalculateHash(fileInfo.DistributedFile)
@@ -247,7 +236,29 @@ func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mu
 		return err
 	}
 
-	source := fmt.Sprintf("%s:%s/%s/%s", fileInfo.Remote.Name, remoteDirectory, fileId, hashedFileName)
+	var source string
+
+	// 🌟 [핵심 변경] sharing.json(또는 FileInfo)에서 받아온 drive_id가 있는지 확인합니다.
+	targetDriveId, hasSharedDriveId := driveIdMap[fileInfo.Remote.Name]
+
+	if hasSharedDriveId && fileInfo.Remote.Type == "onedrive" {
+		// 상대방의 drive_id로 직접 접근하도록 Rclone Connection String 문법 적용
+		source = fmt.Sprintf("%s,drive_id='%s':%s/%s/%s",
+			fileInfo.Remote.Name, targetDriveId, remoteDirectory, fileId, hashedFileName)
+		fmt.Printf("[Shared Download] 타겟 Drive ID(%s)로 직접 접근합니다: %s\n", targetDriveId, source)
+	} else if len(driveIdMap) > 0 && fileInfo.Remote.Type == "drive" {
+		// 🌟 강현님 요청사항: 우선 하드코딩으로 동작하는지 Google Drive API 테스트
+		hardcodedGoogleId := "1M7yo0pGJZ-UG4OfM5K_fYuVcGpD53u0c"
+
+		source = fmt.Sprintf("%s,root_folder_id='%s':%s",
+			fileInfo.Remote.Name, hardcodedGoogleId, hashedFileName)
+		fmt.Printf("[Shared Download] 🧪 Google Drive 하드코딩 테스트 ID(%s)로 직접 접근: %s\n", hardcodedGoogleId, source)
+	} else {
+		// 공유받은 drive_id가 없거나 일반 리모트일 경우 (기존 방식)
+		source = fmt.Sprintf("%s:%s/%s/%s",
+			fileInfo.Remote.Name, remoteDirectory, fileId, hashedFileName)
+	}
+
 	fmt.Printf("Downloading shard %s to %s\n", source, shardDir)
 	downloadedFilePath := path.Join(shardDir, hashedFileName)
 	fmt.Printf("downloadedFilePath: %s\n", downloadedFilePath)
@@ -344,7 +355,16 @@ func remoteCallCopyforDown(args []string) error {
 	if err == fs.ErrorIsFile {
 		// 이 경우 fsrc는 파일이 들어있는 '부모 폴더'가 됩니다.
 		// 경로의 맨 마지막 부분(파일명)을 추출해서 단일 파일 복사를 수행합니다.
-		srcFileName := path.Base(srcString)
+
+		pathPart := srcString
+		if colonIdx := strings.Index(srcString, ":"); colonIdx != -1 {
+			pathPart = srcString[colonIdx+1:] // ':' 뒷부분만 가져옴
+		}
+
+		// 이제 pathPart에는 'Distribution/hash_val' 또는 'hash_val'만 남습니다.
+		srcFileName := path.Base(pathPart)
+
+		fmt.Printf("🎯 [Debug] 추출된 정확한 파일명: %s\n", srcFileName)
 
 		// Cobra 알바생을 거치지 않고 Rclone 심장부(API)에 직접 파일 복사 지시!
 		err = operations.CopyFile(ctx, fdst, fsrc, srcFileName, srcFileName)
