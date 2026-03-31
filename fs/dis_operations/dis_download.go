@@ -72,7 +72,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 
 	start := time.Now()
 	fmt.Printf("---startDownloadFileGoroutine_Worker start---\n")
-	if err := startDownloadFileGoroutine_Worker(distributedFileInfos, fileId, 32, fileInfoForDriveId.DriveIdMap); err != nil {
+	if err := startDownloadFileGoroutine_Worker(distributedFileInfos, fileId, 32, fileInfoForDriveId.DriveIdMap, fileInfoForDriveId.FolderIdMap); err != nil {
 		return err
 	}
 	fmt.Printf("---startDownloadFileGoroutine_Worker end---\n")
@@ -141,7 +141,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 	return nil
 }
 
-func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, fileId string, workerCount int, driveIdMap map[string]string) (err error) {
+func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, fileId string, workerCount int, driveIdMap map[string]string, folderIdMap map[string]string) (err error) {
 	fmt.Printf("\n========================================================\n")
 	fmt.Printf("[DL-Pool] 🚀 다운로드 워커 풀 시작! (파일 ID: %s, 워커 수: %d, 파편 수: %d)\n", fileId, workerCount, len(distributedFileInfos))
 	fmt.Printf("========================================================\n")
@@ -167,7 +167,7 @@ func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, f
 		for fileInfo := range jobs {
 
 			// 실제 다운로드 함수 호출
-			err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs, driveIdMap)
+			err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs, driveIdMap, folderIdMap)
 
 			if err != nil {
 				mu.Lock()
@@ -198,7 +198,7 @@ func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, f
 	return nil
 }
 
-func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, fileId string, driveIdMap map[string]string) (err error) {
+func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, fileId string, driveIdMap map[string]string, folderIdMap map[string]string) (err error) {
 	shardDir, err := reedsolomon.GetShardDir()
 	if err != nil {
 		return err
@@ -212,7 +212,7 @@ func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, fileId s
 		wg.Add(1)
 		go func(fileInfo DistributedFile) {
 			defer wg.Done()
-			if err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs, driveIdMap); err != nil {
+			if err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs, driveIdMap, folderIdMap); err != nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()
@@ -225,7 +225,7 @@ func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, fileId s
 	return nil
 }
 
-func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mutex, errs *[]error, driveIdMap map[string]string) error {
+func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mutex, errs *[]error, driveIdMap map[string]string, folderIdMap map[string]string) error {
 	startTime := time.Now()
 
 	hashedFileName, err := CalculateHash(fileInfo.DistributedFile)
@@ -240,20 +240,18 @@ func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mu
 
 	// 🌟 [핵심 변경] sharing.json(또는 FileInfo)에서 받아온 drive_id가 있는지 확인합니다.
 	targetDriveId, hasSharedDriveId := driveIdMap[fileInfo.Remote.Name]
+	targetFolderId, hasSharedFolderId := folderIdMap[fileInfo.Remote.Name]
 
 	if hasSharedDriveId && fileInfo.Remote.Type == "onedrive" {
 		// 상대방의 drive_id로 직접 접근하도록 Rclone Connection String 문법 적용
 		source = fmt.Sprintf("%s,drive_id='%s':%s/%s/%s",
 			fileInfo.Remote.Name, targetDriveId, remoteDirectory, fileId, hashedFileName)
 		fmt.Printf("[Shared Download] 타겟 Drive ID(%s)로 직접 접근합니다: %s\n", targetDriveId, source)
-	} else if len(driveIdMap) > 0 && fileInfo.Remote.Type == "drive" {
-		// 🌟 강현님 요청사항: 우선 하드코딩으로 동작하는지 Google Drive API 테스트
-
+	} else if hasSharedFolderId && fileInfo.Remote.Type == "drive" {
 		source = fmt.Sprintf("%s,root_folder_id='%s':%s",
-			fileInfo.Remote.Name, targetDriveId, hashedFileName)
+			fileInfo.Remote.Name, targetFolderId, hashedFileName)
 		fmt.Printf("[Shared Download] 🧪 Google Drive 하드코딩 테스트 ID(%s)로 직접 접근: %s\n", targetDriveId, source)
 	} else {
-		// 공유받은 drive_id가 없거나 일반 리모트일 경우 (기존 방식)
 		source = fmt.Sprintf("%s:%s/%s/%s",
 			fileInfo.Remote.Name, remoteDirectory, fileId, hashedFileName)
 	}
