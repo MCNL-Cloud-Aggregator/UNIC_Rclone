@@ -174,6 +174,11 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	return f, nil
 }
 
+// Features returns the optional features of this Fs
+func (f *Fs) Features() *fs.Features {
+	return f.features
+}
+
 func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.Object, error) {
 	remote = strings.TrimPrefix(remote, "/")
 	o := &Object{
@@ -472,12 +477,6 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}
 	fmt.Printf("[%s] UNIC: Put_: dis_upload end\n", remote)
 
-	// dis_upload 성공 시 entrytable.jsonl 파일 갱신
-	// 기존 파일이 있었던 경우(덮어쓰기) 이전 항목 제거
-	if findErr == nil && node != nil {
-		_ = removeNodeFromTable(remote)
-	}
-
 	// 새로운 파일 정보 생성
 	newNode := NodeEntry{
 		Id:      fileID,
@@ -489,21 +488,13 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		Items:   0,
 	}
 
-	// entrytable.jsonl 파일 열기 (추가 모드)
-	entryTable, err := os.OpenFile(entrytable_path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0755)
+	// dis_upload 성공 시 entrytable.jsonl 파일 갱신 (Atomic Update)
+	err = upsertNodeInTable(newNode)
 	if err != nil {
-		return nil, fmt.Errorf("UNIC: Put_: failed to open entrytable: %w", err)
+		return nil, fmt.Errorf("UNIC: Put: failed to update entrytable: %w", err)
 	}
 
-	// JSON 데이터 기록
-	encoder := json.NewEncoder(entryTable)
-	if err := encoder.Encode(newNode); err != nil {
-		_ = entryTable.Close()
-		return nil, fmt.Errorf("UNIC: Put_: failed to encode node to entrytable: %w", err)
-	}
-	_ = entryTable.Close()
-
-	fmt.Printf("[%s] UNIC: Put_: entrytable update success\n", remote)
+	fmt.Printf("[%s] UNIC: Put: entrytable update success\n", remote)
 
 	// Return the object
 	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
@@ -801,10 +792,9 @@ func renameNodeInTable(oldPath, newPath string) error {
 	return os.Rename(tempPath, entrytable_path)
 }
 
-func (f *Fs) Name() string           { return f.name }
-func (f *Fs) Root() string           { return f.root }
-func (f *Fs) String() string         { return f.name }
-func (f *Fs) Features() *fs.Features { return f.features }
+func (f *Fs) Name() string   { return f.name }
+func (f *Fs) Root() string   { return f.root }
+func (f *Fs) String() string { return f.name }
 
 func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
 	f.mu.Lock()
@@ -1194,4 +1184,63 @@ func (f *Fs) RemoveLocalCache(path string) error {
 
 	_ = removeNodeFromTable(path)
 	return nil
+}
+
+func upsertNodeInTable(newNode NodeEntry) error {
+	targetPath := strings.TrimPrefix(newNode.Path, "/")
+
+	// 1. Open the old file to read
+	oldFile, err := os.Open(entrytable_path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	// 2. Create a temporary file to write
+	tempPath := entrytable_path + ".tmp." + fmt.Sprintf("%d", time.Now().UnixNano())
+	newFile, err := os.Create(tempPath)
+	if err != nil {
+		if oldFile != nil {
+			oldFile.Close()
+		}
+		return err
+	}
+	defer newFile.Close()
+
+	encoder := json.NewEncoder(newFile)
+
+	// 3. One pass update: Copy old entries (except the one being updated)
+	if oldFile != nil {
+		scanner := bufio.NewScanner(oldFile)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			if len(bytes.TrimSpace(line)) == 0 {
+				continue
+			}
+			var node NodeEntry
+			if err := json.Unmarshal(line, &node); err != nil {
+				continue
+			}
+			// Skip the entry we are about to update
+			if strings.TrimPrefix(node.Path, "/") == targetPath {
+				continue
+			}
+			if err := encoder.Encode(node); err != nil {
+				oldFile.Close()
+				_ = os.Remove(tempPath)
+				return err
+			}
+		}
+		oldFile.Close()
+	}
+
+	// 4. Append the new entry
+	if err := encoder.Encode(newNode); err != nil {
+		_ = os.Remove(tempPath)
+		return err
+	}
+
+	newFile.Close()
+
+	// 5. Atomic Rename (Watcher will 100% detect this)
+	return os.Rename(tempPath, entrytable_path)
 }
