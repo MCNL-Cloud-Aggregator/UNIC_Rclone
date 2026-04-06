@@ -254,11 +254,12 @@ func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mu
 		source = fmt.Sprintf("%s,drive_id=%s,root_folder_id=%s:",
 			fileInfo.Remote.Name, actualDriveId, targetFolderId)
 	} else {
-		if hasFolderId {
+		if hasFolderId && fileInfo.Remote.Type == "drive" {
 			source = fmt.Sprintf("%s,root_folder_id=%s:",
 				fileInfo.Remote.Name, targetFolderId)
-		} else {
-			fmt.Printf("Error: No folder ID found for remote %s\n", fileInfo.Remote.Name)
+		} else if fileInfo.Remote.Type == "dropbox" {
+			source = fmt.Sprintf("%s:/%s",
+				fileInfo.Remote.Name, fileId)
 		}
 	}
 
