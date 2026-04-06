@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -316,17 +315,8 @@ func (f *File) rename(ctx context.Context, destDir *Dir, newName string) error {
 	// For UNIC backend, immediately rename local cache file if it exists
 	// This happens synchronously even if the backend Rename is deferred via pendingRenameFun
 	if unicFs, ok := destDir.Fs().(*unic.Fs); ok {
-		oldLocalPath, err1 := unicFs.MakeOSDownloadPath(oldPath)
-		newLocalPath, err2 := unicFs.MakeOSDownloadPath(path.Join(dPath, newCacheName))
-		if err1 == nil && err2 == nil {
-			if _, err := os.Stat(oldLocalPath); err == nil {
-				os.MkdirAll(filepath.Dir(newLocalPath), 0755)
-				if err := os.Rename(oldLocalPath, newLocalPath); err != nil {
-					fs.Errorf(f.Path(), "UNIC: File.rename failed to immediately rename local cache file: %v", err)
-				} else {
-					fs.Infof(f.Path(), "UNIC: File.rename successfully renamed local cache file from %s to %s", oldLocalPath, newLocalPath)
-				}
-			}
+		if err := unicFs.RenameLocalCache(oldPath, path.Join(dPath, newCacheName)); err != nil {
+			fs.Errorf(f.Path(), "UNIC: File.rename failed to rename local cache file: %v", err)
 		}
 	}
 

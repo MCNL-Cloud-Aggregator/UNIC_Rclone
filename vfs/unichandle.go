@@ -80,12 +80,10 @@ func (f *File) removeUnic() error {
 	fmt.Printf("[%s] %s unichandle: removeUnic: start\n", f.Path(), time.Now().Format("15:04:05.000"))
 	f.CancelPendingUpload()
 
-	// local cache 삭제
+	// local cache 삭제 (Mutex 보호 하에 수행)
 	if fsObj, ok := f.Fs().(*unic.Fs); ok {
-		localPath, _ := fsObj.MakeOSDownloadPath(f.Path())
-		fmt.Printf("[%s] unichandle: removeUnic: localPath: %s\n", f.Path(), localPath)
-		err := os.Remove(localPath)
-		if err != nil && !os.IsNotExist(err) {
+		err := fsObj.RemoveLocalCache(f.Path())
+		if err != nil {
 			return err
 		}
 	}
@@ -312,13 +310,13 @@ func (fh *UnicFileHandle) close() (err error) {
 		vfsFile := fh.file
 		unicFs := fh.file.Fs().(*unic.Fs)
 
-		// 비동기 업로드 전, vfsFile의 메타데이터를 가져옴 (Vim 경고 방지)
-		preservedModTime := vfsFile.ModTime()
-		preservedSize := vfsFile.Size()
+		//// 비동기 업로드 전, vfsFile의 메타데이터를 가져옴 (Vim 경고 방지)
+		//preservedModTime := vfsFile.ModTime()
+		//preservedSize := vfsFile.Size()
 
-		// dis_upload 전에 메타데이터 기록
-		vfsFile.SetModTime(preservedModTime)
-		vfsFile.setSize(preservedSize)
+		//// dis_upload 전에 메타데이터 기록
+		//vfsFile.SetModTime(preservedModTime)
+		//vfsFile.setSize(preservedSize)
 
 		// 현재 로컬 파일 핸들은 즉시 닫아주어 Vim 등 다른 프로세스가 접근/삭제할 수 있게 놓아줌
 		if closeErr := fh.localFile.Close(); closeErr != nil {
@@ -351,29 +349,24 @@ func (fh *UnicFileHandle) close() (err error) {
 				cancel()
 			}()
 
-			// 5초 대기 (취소 가능)
+			// 3초 대기 (취소 가능)
 			select {
-			case <-time.After(5 * time.Second):
+			case <-time.After(3 * time.Second):
 				fmt.Printf("[%s] unichandle: async upload start \n", remotePath)
 			case <-ctx.Done():
 				fmt.Printf("[%s] unichandle: async upload cancelled \n", remotePath)
 				return
 			}
 
-			//// 5초 대기 완료 후 실제 업로드 시작 시점
-			//// 업로드 중 다른 시스템 콜(Rename, Remove 등)이 끼어들지 못하도록 배타적 잠금(Lock)을 겁니다.
-			//vfsFile.uploadMu.Lock()
-			//defer vfsFile.uploadMu.Unlock()
-
-			vfsFile.mu.Lock()
-			if vfsFile.nwriters.Load() > 0 {
-				fmt.Printf("[%s] unichandle: async upload deferred (file still has active writers) \n", remotePath)
-				vfsFile.cancelUpload = nil
-				vfsFile.mu.Unlock()
-				return
-			}
+			//vfsFile.mu.Lock()
+			//if vfsFile.nwriters.Load() > 0 {
+			//	fmt.Printf("[%s] unichandle: async upload deferred (file still has active writers) \n", remotePath)
+			//	vfsFile.cancelUpload = nil
+			//	vfsFile.mu.Unlock()
+			//	return
+			//}
 			vfsFile.cancelUpload = nil
-			vfsFile.mu.Unlock() // 데드락 방지! Path() 호출 전 무조건 언락해야 합니다.
+			//vfsFile.mu.Unlock() // 데드락 방지! Path() 호출 전 무조건 언락해야 합니다.
 
 			// 에디터의 rename 동작으로 인해 현재 파일 이름이 바뀌었을 수 있으므로 VFS File 객체의 최신 Path() 확인
 			currentRemotePath := vfsFile.Path()

@@ -954,8 +954,52 @@ func (o *Object) Size() int64 {
 func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) { return "", nil }
 func (o *Object) Storable() bool                                         { return true }
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
+	o.fs.mu.Lock()
+	defer o.fs.mu.Unlock()
+
 	o.modTime = t
-	return nil
+
+	// entrytable.jsonl 갱신
+	oldFile, err := os.Open(entrytable_path)
+	if err != nil {
+		return err
+	}
+	defer oldFile.Close()
+
+	tempPath := entrytable_path + ".tmp." + fmt.Sprintf("%d", time.Now().UnixNano())
+	newFile, err := os.Create(tempPath)
+	if err != nil {
+		return err
+	}
+	defer newFile.Close()
+
+	decoder := json.NewDecoder(oldFile)
+	encoder := json.NewEncoder(newFile)
+
+	for {
+		var node NodeEntry
+		if err := decoder.Decode(&node); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		// 해당 파일의 ModTime 갱신
+		if node.Path == o.remote && node.Type == "file" {
+			node.ModTime = t
+		}
+
+		if err := encoder.Encode(node); err != nil {
+			_ = os.Remove(tempPath)
+			return err
+		}
+	}
+
+	oldFile.Close()
+	newFile.Close()
+
+	return os.Rename(tempPath, entrytable_path)
 }
 
 // mount 시 캐시 초기화
@@ -1125,6 +1169,12 @@ func (o *Object) Remove(ctx context.Context) error {
 
 	//fmt.Println("UNIC: Remove: Remove Success")
 
+	// dis_rm 수행 후 entrytable.jsonl에서 해당 파일 항목 삭제
+	err = removeNodeFromTable(o.remote)
+	if err != nil {
+		fs.Errorf(o.remote, "UNIC: Remove: failed to remove from entrytable: %v", err)
+	}
+
 	// 파일 삭제 후 부모 디렉토리 수정시간 갱신 (unlink)
 	_ = updateParentDirModTime(o.remote, time.Now())
 
@@ -1157,4 +1207,43 @@ func (d *Directory) Items() int64 {
 
 func (d *Directory) ID() string {
 	return fmt.Sprintf("%s", d.id)
+}
+
+// RenameLocalCache renames the local cache file under mutex protection
+func (f *Fs) RenameLocalCache(oldPath, newPath string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	oldLocalPath, err1 := f.MakeOSDownloadPath(oldPath)
+	newLocalPath, err2 := f.MakeOSDownloadPath(newPath)
+	if err1 != nil || err2 != nil {
+		return fmt.Errorf("failed to make os download paths: %v, %v", err1, err2)
+	}
+
+	if _, err := os.Stat(oldLocalPath); err == nil {
+		os.MkdirAll(filepath.Dir(newLocalPath), 0755)
+		if err := os.Rename(oldLocalPath, newLocalPath); err != nil {
+			return err
+		}
+		fmt.Printf("UNIC: RenameLocalCache: successfully renamed from %s to %s\n", oldLocalPath, newLocalPath)
+	}
+	return nil
+}
+
+// RemoveLocalCache removes the local cache file under mutex protection
+func (f *Fs) RemoveLocalCache(remotePath string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	localPath, err := f.MakeOSDownloadPath(remotePath)
+	if err != nil {
+		return err
+	}
+
+	err = os.Remove(localPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	fmt.Printf("UNIC: RemoveLocalCache: successfully removed %s\n", localPath)
+	return nil
 }
