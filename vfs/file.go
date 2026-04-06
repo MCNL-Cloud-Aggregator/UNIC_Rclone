@@ -313,10 +313,17 @@ func (f *File) rename(ctx context.Context, destDir *Dir, newName string) error {
 	f.mu.Unlock()
 
 	// For UNIC backend, immediately rename local cache file if it exists
-	// This happens synchronously even if the backend Rename is deferred via pendingRenameFun
 	if unicFs, ok := destDir.Fs().(*unic.Fs); ok {
-		if err := unicFs.RenameLocalCache(oldPath, path.Join(dPath, newCacheName)); err != nil {
-			fs.Errorf(f.Path(), "UNIC: File.rename failed to rename local cache file: %v", err)
+		// New file (pending upload) case
+		if f.getObject() == nil {
+			if err := unicFs.RenameLocalCache(oldPath, path.Join(dPath, newCacheName)); err != nil {
+				fs.Errorf(f.Path(), "UNIC: File.rename failed to rename pending local cache: %v", err)
+			}
+		} else {
+			// Regular file case: only rename physical file, let Move handle the entrytable
+			if err := unicFs.RenameLocalCachePhysical(oldPath, path.Join(dPath, newCacheName)); err != nil {
+				fs.Errorf(f.Path(), "UNIC: File.rename failed to rename physical local cache: %v", err)
+			}
 		}
 	}
 

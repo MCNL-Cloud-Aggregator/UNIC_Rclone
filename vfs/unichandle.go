@@ -401,17 +401,26 @@ func (fh *UnicFileHandle) close() (err error) {
 				}
 			}
 
-			fmt.Printf("[%s] unichandle: async upload started as [%s]\n", remotePath, currentRemotePath)
+			// 최신 경로를 다시 획득합니다 (업로드 대기/진행 도중 Rename 되었을 수 있음)
+			actualRemotePath := vfsFile.Path()
+			actualLocalPath, pathErr := unicFs.MakeOSDownloadPath(actualRemotePath)
 
-			// Put_ 을 위해 파일을 새로 엽니다.
-			uploadFile, err := os.Open(currentLocalPath)
-			if err != nil {
-				fs.Errorf(remotePath, "async upload failed to re-open local cache: %v", err)
+			fmt.Printf("[%s] unichandle: async upload started (Latest Path: [%s])\n", remotePath, actualRemotePath)
+
+			if pathErr != nil {
+				fs.Errorf(remotePath, "async upload failed to get latest local path: %v", pathErr)
 				return
 			}
 
-			// 바뀐 이름(currentRemotePath)으로 클라우드에 업로드 수행!
-			newObj, uploadErr := unicFs.Put_(context.Background(), uploadFile, currentRemotePath)
+			// Put_ 을 위해 파일을 새로 엽니다. (최신 경로 사용)
+			uploadFile, err := os.Open(actualLocalPath)
+			if err != nil {
+				fs.Errorf(remotePath, "async upload failed to re-open local cache at %s: %v", actualLocalPath, err)
+				return
+			}
+
+			// 최신 이름(actualRemotePath)으로 클라우드에 업로드 수행!
+			newObj, uploadErr := unicFs.Put_(context.Background(), uploadFile, actualRemotePath)
 			uploadFile.Close()
 			if uploadErr != nil {
 				fs.Errorf(currentRemotePath, "async upload failed: %v", uploadErr)
