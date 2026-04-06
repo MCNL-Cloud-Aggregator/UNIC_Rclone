@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rclone/rclone/backend/unic/common"
@@ -59,6 +60,7 @@ type Fs struct {
 	opt      common.Options // parsed options
 	root     string         // the path we are working on
 	hashSet  hash.Set       // intersection of hash types
+	mu       sync.Mutex     // global mutex for metadata operations
 }
 
 // Will definitely have info but maybe not meta
@@ -194,6 +196,8 @@ func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.
 }
 
 func (f *Fs) NewObject(ctx context.Context, remote string) (entry fs.Object, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.newObject(ctx, remote, nil)
 }
 
@@ -375,7 +379,8 @@ func makeRemote(path string, prefix string) string {
 }
 
 func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
-
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	list := walk.NewListRHelper(callback)
 
 	entries, err := f.getList(ctx, dir, isUnderDir)
@@ -392,6 +397,8 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 /* Fs */
 // Fs
 func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	entries, err := f.getList(ctx, dir, isDirectChild)
 	if err != nil {
 		return nil, err
@@ -480,6 +487,8 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 
 // UNIC을 마운팅한 mount point에 write system call이 들어올 때 실행
 func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...fs.OpenOption) (fs.Object, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	fmt.Printf("%s [%s] UNIC: Put_: Put_ method Start\n", time.Now().Format("15:04:05.000"), remote)
 
 	// src 파일 핸들로부터 파일 정보(FileInfo) 가져오기
@@ -512,6 +521,44 @@ func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...f
 		return nil, fmt.Errorf("UNIC: Put_: Dis_Upload failed: %w", err)
 	}
 	fmt.Printf("[%s] UNIC: Put_: dis_upload end\n", remote)
+
+	// dis_upload 성공 시 entrytable.jsonl 파일 갱신
+	// 기존 파일이 있었던 경우(덮어쓰기) 이전 항목 제거
+	if findErr == nil && node != nil {
+		_ = removeNodeFromTable(remote)
+	}
+
+	// 새로운 파일 정보 생성
+	newNode := NodeEntry{
+		Id:      fileID,
+		Name:    filepath.Base(remote),
+		Path:    remote,
+		Type:    NodeTypeFile,
+		Size:    info.Size(),
+		ModTime: info.ModTime(),
+		Items:   0,
+	}
+
+	// entrytable.jsonl 파일 열기 (추가 모드)
+	entryTable, err := os.OpenFile(entrytable_path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0755)
+	if err != nil {
+		return nil, fmt.Errorf("UNIC: Put_: failed to open entrytable: %w", err)
+	}
+
+	// 줄바꿈 처리 (기존 내용이 있는 경우)
+	if fi, err := entryTable.Stat(); err == nil && fi.Size() > 0 {
+		_, _ = entryTable.WriteString("\n")
+	}
+
+	// JSON 데이터 기록
+	encoder := json.NewEncoder(entryTable)
+	if err := encoder.Encode(newNode); err != nil {
+		_ = entryTable.Close()
+		return nil, fmt.Errorf("UNIC: Put_: failed to encode node to entrytable: %w", err)
+	}
+	_ = entryTable.Close()
+
+	fmt.Printf("[%s] UNIC: Put_: entrytable update success\n", remote)
 
 	// Return the object
 	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
@@ -582,6 +629,8 @@ func updateParentDirModTime(childPath string, t time.Time) error {
 
 // UNIC을 마운팅한 mount point에 mkdir system call이 들어올 때 실행
 func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	fmt.Printf("%s UNIC: Mkdir: Mkdir method Start\n", time.Now().Format("15:04:05.000"))
 
 	// open entrytable
@@ -619,6 +668,8 @@ func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 }
 
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	fmt.Printf("%s [%s] UNIC: Rmdir: Rmdir method Start\n", time.Now().Format("15:04:05.000"), dir)
 
 	// open entrytable
@@ -664,8 +715,8 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 }
 
 func removeNodeFromTable(targetNode string) error {
-	// 원본 파일 열기
-	oldFile, err := os.OpenFile(entrytable_path, os.O_WRONLY, 0755)
+	// 원본 파일 열기 (읽기 모드)
+	oldFile, err := os.Open(entrytable_path)
 	if err != nil {
 		return err
 	}
@@ -713,6 +764,8 @@ func (f *Fs) String() string         { return f.name }
 func (f *Fs) Features() *fs.Features { return f.features }
 
 func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	fmt.Printf("%s [%s] UNIC: Move: Move method Start. src: %s, remote: %s\n", time.Now().Format("15:04:05.000"), src.Remote(), src.Remote(), remote)
 
 	srcObj, ok := src.(*Object)
@@ -794,6 +847,8 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 }
 
 func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	fmt.Printf("%s [%s] UNIC: DirMove: DirMove method Start. srcRemote: %s, dstRemote: %s\n", time.Now().Format("15:04:05.000"), srcRemote, srcRemote, dstRemote)
 
 	if src.Name() != f.Name() || src.Root() != f.Root() {
@@ -1055,6 +1110,8 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 
 // UNIC을 마운팅한 mount point에 unlink system call이 들어올 때 실행
 func (o *Object) Remove(ctx context.Context) error {
+	o.fs.mu.Lock()
+	defer o.fs.mu.Unlock()
 	fmt.Printf("%s UNIC: Remove: Remove method start\n", time.Now().Format("15:04:05.000"))
 
 	// dis_rm 수행
