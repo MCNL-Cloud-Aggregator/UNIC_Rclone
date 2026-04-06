@@ -434,74 +434,21 @@ func (f *Fs) getUpstreamRemotes() []config.Remote {
 
 // UNIC을 마운팅한 mount point에 write system call이 들어올 때 실행
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	//fmt.Printf("%s UNIC: Put: Put method Start\n", time.Now().Format("15:04:05.000"))
+	remote := src.Remote()
+	srcfile := in.(*os.File)
 
-	//// Create a temporary directory
-	////fmt.Println("UNIC: Put: Create a temporary directory start")
-	//tempDir, err := os.MkdirTemp("", "unic_upload")
-	//if err != nil {
-	//	return nil, fmt.Errorf("UNIC: Put: failed to create temp dir: %w", err)
-	//}
-	//defer os.RemoveAll(tempDir) // Clean up tempDir
-
-	//// Create the file with the correct name
-	////fmt.Println("UNIC: Put: Create a temporary file start")
-	//tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
-	////fmt.Printf("src.Remote(): %s, tempFilePath: %s\n", src.Remote(), tempFilePath)
-	//tempFile, err := os.Create(tempFilePath)
-	//if err != nil {
-	//	return nil, fmt.Errorf("UNIC: Put: failed to create temp file: %w", err)
-	//}
-
-	//// Copy content
-	////fmt.Println("UNIC: Put: Copy content to temp file start")
-	//_, err = io.Copy(tempFile, in)
-	//if err != nil {
-	//	return nil, fmt.Errorf("UNIC: Put: failed to write to temp file: %w", err)
-	//}
-
-	//tempFile.Sync() // 필수적인가?
-	//closeErr := tempFile.Close()
-	//if closeErr != nil {
-	//	return nil, fmt.Errorf("UNIC: Put: failed to close temp file: %w", closeErr)
-	//}
-
-	//// Call Dis_Upload
-	////fmt.Println("UNIC: Put: dis_upload start")
-	////fmt.Printf("tempFilePath: %s, remotes: %s\n", tempFilePath, f.getUpstreamRemotes())
-
-	//remotePath := src.Remote()
-	//fileID := generateHash((remotePath))
-	//err = dis_operations.Dis_Upload([]string{tempFilePath, remotePath, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
-	//if err != nil {
-	//	return nil, fmt.Errorf("UNIC: Put: Dis_Upload failed: %w", err)
-	//}
-	////fmt.Println("UNIC: Put: Put Success")
-
-	//// Return the object
-	//// We construct the Object based on the source info as entry table lookup might fail or be delayed.
-	return &Object{
-		fs:      f,
-		remote:  src.Remote(),
-		size:    src.Size(),
-		modTime: src.ModTime(ctx),
-	}, nil
-}
-
-// UNIC을 마운팅한 mount point에 write system call이 들어올 때 실행
-func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...fs.OpenOption) (fs.Object, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	fmt.Printf("%s [%s] UNIC: Put_: Put_ method Start\n", time.Now().Format("15:04:05.000"), remote)
 
 	// src 파일 핸들로부터 파일 정보(FileInfo) 가져오기
-	info, err := src.Stat()
+	info, err := srcfile.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("UNIC: Put_: failed to get file info: %w", err)
 	}
 
 	// src가 실존하는 파일인지 확인
-	if _, err := os.Stat(src.Name()); err != nil {
+	if _, err := os.Stat(srcfile.Name()); err != nil {
 		fmt.Printf("UNIC: Put_: File do not exist error: %s\n", err)
 	}
 
@@ -519,7 +466,7 @@ func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...f
 	}
 
 	fmt.Printf("[%s] UNIC: Put_: dis_upload start\n", remote)
-	err = dis_operations.Dis_Upload([]string{src.Name(), remote, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
+	err = dis_operations.Dis_Upload([]string{srcfile.Name(), remote, fileID}, dis_operations.UploadTargets{Remotes: f.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
 	if err != nil {
 		return nil, fmt.Errorf("UNIC: Put_: Dis_Upload failed: %w", err)
 	}
@@ -1170,64 +1117,6 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadClo
 }
 
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
-	//// dis_rm 수행하여 기존의 파일 삭제
-	//fs.Debugf(o, "----------Update method start----------")
-
-	//// dis_rm 수행
-	//fs.Debugf(o, "----------dis_operations.Dis_rm start----------")
-	//err := dis_operations.Dis_rm([]string{o.remote}, false)
-	//if err != nil {
-	//	return err
-	//}
-	//fs.Debugf(o, "----------dis_operations.Dis_rm end----------")
-
-	//// dis_upload 수행하여 새로운 파일 업로드
-	//// Create a temporary directory
-	//fs.Debugf(o, "----------Create a temporary directory start--------------")
-	//tempDir, err := os.MkdirTemp("", "unic_upload")
-	//if err != nil {
-	//	return err
-	//}
-	//defer os.RemoveAll(tempDir) // Clean up
-	//fs.Debugf(o, "----------Create a temporary directory end--------------")
-
-	//// Create the file with the correct name
-	//fs.Debugf(o, "----------Create a temporary file start--------------")
-	//tempFilePath := filepath.Join(tempDir, filepath.Base(src.Remote()))
-	//fs.Debugf(o, "src.Remote(): %s", src.Remote())
-	//fs.Debugf(o, "tempFilePath: %s", tempFilePath)
-	//tempFile, err := os.Create(tempFilePath)
-	//if err != nil {
-	//	return err
-	//}
-	//fs.Debugf(o, "----------Create a temporary file end--------------")
-
-	//// Copy content
-	//fs.Debugf(o, "----------Copy content to temp file start--------------")
-	//_, err = io.Copy(tempFile, in)
-
-	//tempFile.Sync()
-	//closeErr := tempFile.Close()
-	//if err != nil {
-	//	return err
-	//}
-	//if closeErr != nil {
-	//	return closeErr
-	//}
-	//fs.Debugf(o, "----------Copy content to temp file end--------------")
-
-	//// Call Dis_Upload
-	//// args[0] is the file path. reSignal is false. LoadBalancer is RoundRobin (default).
-	//fs.Debugf(o, "----------dis_upload start--------------")
-	//fs.Debugf(o, "tempFilePath: %s, remotes: %s", tempFilePath, o.fs.getUpstreamRemotes())
-	//fileId := o.id
-	//remotePath := o.remote
-	//err = dis_operations.Dis_Upload([]string{tempFilePath, fileId, remotePath}, dis_operations.UploadTargets{Remotes: o.fs.getUpstreamRemotes(), UseConfig: false}, false, dis_operations.RoundRobinFromSelectedRemotes)
-	//if err != nil {
-	//	return err
-	//}
-	//fs.Debugf(o, "----------dis_upload end--------------")
-	//fs.Debugf(o, "----------Update method end--------------")
 
 	return nil
 }
