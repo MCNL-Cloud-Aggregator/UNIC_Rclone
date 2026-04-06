@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,6 +58,7 @@ type File struct {
 	appendMode       bool                            // file was opened with O_APPEND
 	isLink           bool                            // file represents a symlink
 	cancelUpload     context.CancelFunc              // cancellation for background upload
+	uploadMu         sync.RWMutex                    // synchronize background upload and system calls
 }
 
 // newFile creates a new File
@@ -230,6 +230,8 @@ func (f *File) applyPendingRename() {
 // Otherwise it will queue the rename operation on the remote until no writers
 // remain.
 func (f *File) rename(ctx context.Context, destDir *Dir, newName string) error {
+	f.uploadMu.RLock()
+	defer f.uploadMu.RUnlock()
 	f.mu.RLock()
 	d := f.d
 	oldPendingRenameFun := f.pendingRenameFun
@@ -311,18 +313,16 @@ func (f *File) rename(ctx context.Context, destDir *Dir, newName string) error {
 	f.mu.Unlock()
 
 	// For UNIC backend, immediately rename local cache file if it exists
-	// This happens synchronously even if the backend Rename is deferred via pendingRenameFun
 	if unicFs, ok := destDir.Fs().(*unic.Fs); ok {
-		oldLocalPath, err1 := unicFs.MakeOSDownloadPath(oldPath)
-		newLocalPath, err2 := unicFs.MakeOSDownloadPath(path.Join(dPath, newCacheName))
-		if err1 == nil && err2 == nil {
-			if _, err := os.Stat(oldLocalPath); err == nil {
-				os.MkdirAll(filepath.Dir(newLocalPath), 0755)
-				if err := os.Rename(oldLocalPath, newLocalPath); err != nil {
-					fs.Errorf(f.Path(), "UNIC: File.rename failed to immediately rename local cache file: %v", err)
-				} else {
-					fs.Infof(f.Path(), "UNIC: File.rename successfully renamed local cache file from %s to %s", oldLocalPath, newLocalPath)
-				}
+		// New file (pending upload) case
+		if f.getObject() == nil {
+			if err := unicFs.RenameLocalCache(oldPath, path.Join(dPath, newCacheName)); err != nil {
+				fs.Errorf(f.Path(), "UNIC: File.rename failed to rename pending local cache: %v", err)
+			}
+		} else {
+			// Regular file case: only rename physical file, let Move handle the entrytable
+			if err := unicFs.RenameLocalCachePhysical(oldPath, path.Join(dPath, newCacheName)); err != nil {
+				fs.Errorf(f.Path(), "UNIC: File.rename failed to rename physical local cache: %v", err)
 			}
 		}
 	}
@@ -638,6 +638,8 @@ func (f *File) waitForValidObject() (o fs.Object, err error) {
 
 // openRead open the file for read
 func (f *File) openRead() (fh *ReadFileHandle, err error) {
+	f.uploadMu.RLock()
+	defer f.uploadMu.RUnlock()
 	// if o is nil it isn't valid yet
 	_, err = f.waitForValidObject()
 	if err != nil {
@@ -655,6 +657,8 @@ func (f *File) openRead() (fh *ReadFileHandle, err error) {
 
 // openWrite open the file for write
 func (f *File) openWrite(flags int) (fh *WriteFileHandle, err error) {
+	f.uploadMu.RLock()
+	defer f.uploadMu.RUnlock()
 	f.mu.RLock()
 	d := f.d
 	f.mu.RUnlock()
@@ -676,6 +680,8 @@ func (f *File) openWrite(flags int) (fh *WriteFileHandle, err error) {
 //
 // It uses the open flags passed in.
 func (f *File) openRW(flags int) (fh *RWFileHandle, err error) {
+	f.uploadMu.RLock()
+	defer f.uploadMu.RUnlock()
 	f.mu.RLock()
 	d := f.d
 	f.mu.RUnlock()
@@ -703,6 +709,8 @@ func (f *File) Sync() error {
 
 // Remove the file
 func (f *File) Remove() (err error) {
+	f.uploadMu.RLock()
+	defer f.uploadMu.RUnlock()
 	defer log.Trace(f.Path(), "")("err=%v", &err)
 
 	if _, ok := f.Fs().(*unic.Fs); ok {

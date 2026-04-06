@@ -1,6 +1,8 @@
 package unic
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rclone/rclone/backend/unic/common"
@@ -59,6 +62,7 @@ type Fs struct {
 	opt      common.Options // parsed options
 	root     string         // the path we are working on
 	hashSet  hash.Set       // intersection of hash types
+	mu       sync.Mutex     // global mutex for metadata operations
 }
 
 // Will definitely have info but maybe not meta
@@ -171,6 +175,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 }
 
 func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.Object, error) {
+	remote = strings.TrimPrefix(remote, "/")
 	o := &Object{
 		fs:     f,
 		remote: remote,
@@ -194,6 +199,8 @@ func (f *Fs) newObject(ctx context.Context, remote string, node *NodeEntry) (fs.
 }
 
 func (f *Fs) NewObject(ctx context.Context, remote string) (entry fs.Object, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.newObject(ctx, remote, nil)
 }
 
@@ -202,27 +209,27 @@ func (f *Fs) GetUserId() string {
 }
 
 func (f *Fs) findNodeFromTable(remote string) (*NodeEntry, error) {
+	remote = strings.TrimPrefix(remote, "/")
 	entryTable, err := os.Open(entrytable_path)
 	if err != nil {
 		return nil, err
 	}
 	defer entryTable.Close()
 
-	decoder := json.NewDecoder(entryTable)
-	for {
-		var node NodeEntry
-		if err := decoder.Decode(&node); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, err
+	scanner := bufio.NewScanner(entryTable)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
 		}
-
-		if node.Path == remote {
+		var node NodeEntry
+		if err := json.Unmarshal(line, &node); err != nil {
+			continue
+		}
+		if strings.TrimPrefix(node.Path, "/") == remote {
 			return &node, nil
 		}
 	}
-
 	return nil, fs.ErrorObjectNotFound
 }
 
@@ -375,7 +382,8 @@ func makeRemote(path string, prefix string) string {
 }
 
 func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (err error) {
-
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	list := walk.NewListRHelper(callback)
 
 	entries, err := f.getList(ctx, dir, isUnderDir)
@@ -392,6 +400,8 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 /* Fs */
 // Fs
 func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	entries, err := f.getList(ctx, dir, isDirectChild)
 	if err != nil {
 		return nil, err
@@ -480,6 +490,8 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 
 // UNIC을 마운팅한 mount point에 write system call이 들어올 때 실행
 func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...fs.OpenOption) (fs.Object, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	fmt.Printf("%s [%s] UNIC: Put_: Put_ method Start\n", time.Now().Format("15:04:05.000"), remote)
 
 	// src 파일 핸들로부터 파일 정보(FileInfo) 가져오기
@@ -513,6 +525,39 @@ func (f *Fs) Put_(ctx context.Context, src *os.File, remote string, options ...f
 	}
 	fmt.Printf("[%s] UNIC: Put_: dis_upload end\n", remote)
 
+	// dis_upload 성공 시 entrytable.jsonl 파일 갱신
+	// 기존 파일이 있었던 경우(덮어쓰기) 이전 항목 제거
+	if findErr == nil && node != nil {
+		_ = removeNodeFromTable(remote)
+	}
+
+	// 새로운 파일 정보 생성
+	newNode := NodeEntry{
+		Id:      fileID,
+		Name:    filepath.Base(remote),
+		Path:    remote,
+		Type:    NodeTypeFile,
+		Size:    info.Size(),
+		ModTime: info.ModTime(),
+		Items:   0,
+	}
+
+	// entrytable.jsonl 파일 열기 (추가 모드)
+	entryTable, err := os.OpenFile(entrytable_path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0755)
+	if err != nil {
+		return nil, fmt.Errorf("UNIC: Put_: failed to open entrytable: %w", err)
+	}
+
+	// JSON 데이터 기록
+	encoder := json.NewEncoder(entryTable)
+	if err := encoder.Encode(newNode); err != nil {
+		_ = entryTable.Close()
+		return nil, fmt.Errorf("UNIC: Put_: failed to encode node to entrytable: %w", err)
+	}
+	_ = entryTable.Close()
+
+	fmt.Printf("[%s] UNIC: Put_: entrytable update success\n", remote)
+
 	// Return the object
 	// We construct the Object based on the source info as entry table lookup might fail or be delayed.
 	return &Object{
@@ -535,12 +580,13 @@ func generateHash(remotePath string) string {
 
 // 부모 디렉토리의 수정시간을 갱신하는 함수
 func updateParentDirModTime(childPath string, t time.Time) error {
+	childPath = strings.TrimPrefix(childPath, "/")
 	parentPath := path.Dir(childPath)
 	if parentPath == "" || parentPath == "." || parentPath == "/" {
 		return nil
 	}
 
-	oldFile, err := os.OpenFile(entrytable_path, os.O_RDWR, 0755)
+	oldFile, err := os.Open(entrytable_path)
 	if err != nil {
 		return err
 	}
@@ -553,35 +599,38 @@ func updateParentDirModTime(childPath string, t time.Time) error {
 	}
 	defer newFile.Close()
 
-	decoder := json.NewDecoder(oldFile)
+	scanner := bufio.NewScanner(oldFile)
 	encoder := json.NewEncoder(newFile)
 
-	for {
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
 		var node NodeEntry
-		if err := decoder.Decode(&node); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
+		if err := json.Unmarshal(line, &node); err != nil {
+			continue
 		}
 
-		if node.Path == parentPath && node.Type == "dir" {
+		if strings.TrimPrefix(node.Path, "/") == parentPath && node.Type == "dir" {
 			node.ModTime = t
 		}
 
 		if err := encoder.Encode(node); err != nil {
+			_ = os.Remove(tempPath)
 			return err
 		}
 	}
 
 	oldFile.Close()
 	newFile.Close()
-
 	return os.Rename(tempPath, entrytable_path)
 }
 
 // UNIC을 마운팅한 mount point에 mkdir system call이 들어올 때 실행
 func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	fmt.Printf("%s UNIC: Mkdir: Mkdir method Start\n", time.Now().Format("15:04:05.000"))
 
 	// open entrytable
@@ -603,9 +652,6 @@ func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 	node.ModTime = time.Now() // 디렉토리 생성 시간 지정
 
 	// update entrytable
-	if fi, err := entryTable.Stat(); err == nil && fi.Size() > 0 {
-		_, _ = entryTable.WriteString("\n")
-	}
 	encoder := json.NewEncoder(entryTable)
 	if err := encoder.Encode(node); err != nil {
 		return err
@@ -619,6 +665,8 @@ func (f *Fs) Mkdir(ctx context.Context, dirPath string) error {
 }
 
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	fmt.Printf("%s [%s] UNIC: Rmdir: Rmdir method Start\n", time.Now().Format("15:04:05.000"), dir)
 
 	// open entrytable
@@ -664,46 +712,145 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 }
 
 func removeNodeFromTable(targetNode string) error {
-	// 원본 파일 열기
-	oldFile, err := os.OpenFile(entrytable_path, os.O_WRONLY, 0755)
+	targetNode = strings.TrimPrefix(targetNode, "/")
+	oldFile, err := os.Open(entrytable_path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
 	defer oldFile.Close()
 
-	// 임시 파일 생성
-	tempPath := entrytable_path + ".tmp"
+	tempPath := entrytable_path + ".tmp." + fmt.Sprintf("%d", time.Now().UnixNano())
 	newFile, err := os.Create(tempPath)
 	if err != nil {
 		return err
 	}
 	defer newFile.Close()
 
-	decoder := json.NewDecoder(oldFile)
+	scanner := bufio.NewScanner(oldFile)
 	encoder := json.NewEncoder(newFile)
 
-	// 한 줄씩 읽으면서 필터링
-	for {
-		var node NodeEntry
-		if err := decoder.Decode(&node); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
 		}
-
-		// 삭제 대상(Path가 일치하는 노드)이 아니면 새 파일에 씀
-		if node.Path != targetNode {
-			if err := encoder.Encode(node); err != nil {
-				return err
-			}
+		var node NodeEntry
+		if err := json.Unmarshal(line, &node); err != nil {
+			continue
+		}
+		if strings.TrimPrefix(node.Path, "/") == targetNode {
+			continue
+		}
+		if err := encoder.Encode(node); err != nil {
+			_ = os.Remove(tempPath)
+			return err
 		}
 	}
 
-	// 파일 교체 (Atomic Rename)
+	oldFile.Close()
+	newFile.Close()
+	return os.Rename(tempPath, entrytable_path)
+}
+
+func renameInDatamap(oldName, newName string) error {
+	oldName = strings.TrimPrefix(oldName, "/")
+	newName = strings.TrimPrefix(newName, "/")
+
+	datamapPath := filepath.Join(os.Getenv("HOME"), ".config/rclone/data/datamap.json")
+	data, err := os.ReadFile(datamapPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var datamap map[string]interface{}
+	if err := json.Unmarshal(data, &datamap); err != nil {
+		return err
+	}
+
+	found := false
+	for _, v := range datamap {
+		info, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if info["backend_file_path"] == oldName {
+			info["original_file_name"] = newName
+			info["backend_file_path"] = newName
+			found = true
+		}
+	}
+
+	if !found {
+		return nil // 혹은 필요에 따라 처리
+	}
+
+	newData, err := json.MarshalIndent(datamap, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(datamapPath, newData, 0644)
+}
+
+func renameNodeInTable(oldPath, newPath string) error {
+	oldPath = strings.TrimPrefix(oldPath, "/")
+	newPath = strings.TrimPrefix(newPath, "/")
+
+	oldFile, err := os.Open(entrytable_path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer oldFile.Close()
+
+	tempPath := entrytable_path + ".tmp." + fmt.Sprintf("%d", time.Now().UnixNano())
+	newFile, err := os.Create(tempPath)
+	if err != nil {
+		return err
+	}
+	defer newFile.Close()
+
+	scanner := bufio.NewScanner(oldFile)
+	encoder := json.NewEncoder(newFile)
+	found := false
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var node NodeEntry
+		if err := json.Unmarshal(line, &node); err != nil {
+			continue
+		}
+
+		if strings.TrimPrefix(node.Path, "/") == oldPath {
+			node.Path = newPath
+			node.Name = filepath.Base(newPath)
+			found = true
+		}
+
+		if err := encoder.Encode(node); err != nil {
+			_ = os.Remove(tempPath)
+			return err
+		}
+	}
+
 	oldFile.Close()
 	newFile.Close()
 
+	if !found {
+		os.Remove(tempPath)
+		return fs.ErrorObjectNotFound
+	}
 	return os.Rename(tempPath, entrytable_path)
 }
 
@@ -713,6 +860,8 @@ func (f *Fs) String() string         { return f.name }
 func (f *Fs) Features() *fs.Features { return f.features }
 
 func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	fmt.Printf("%s [%s] UNIC: Move: Move method Start. src: %s, remote: %s\n", time.Now().Format("15:04:05.000"), src.Remote(), src.Remote(), remote)
 
 	srcObj, ok := src.(*Object)
@@ -722,78 +871,61 @@ func (f *Fs) Move(ctx context.Context, src fs.Object, remote string) (fs.Object,
 
 	srcPath := srcObj.remote
 
-	oldFile, err := os.OpenFile(entrytable_path, os.O_RDWR, 0755)
+	// 1. entrytable.jsonl 및 datamap.json 업데이트
+	_ = renameInDatamap(srcPath, remote)
+	if err := renameNodeInTable(srcPath, remote); err != nil {
+		// 이미 갱신되어 있을 수 있으므로 확인
+		if alreadyMovedNode, ferr := f.findNodeFromTable(remote); ferr == nil {
+			fmt.Printf("UNIC: Move: Node already at destination %s\n", remote)
+			_ = f.RenameLocalCachePhysical(srcPath, remote)
+			return f.newObject(ctx, remote, alreadyMovedNode)
+		}
+		return nil, err
+	}
+
+	// 2. 물리적 파일 이름 변경
+	_ = f.RenameLocalCachePhysical(srcPath, remote)
+
+	movedNode, err := f.findNodeFromTable(remote)
 	if err != nil {
 		return nil, err
 	}
-	defer oldFile.Close()
-
-	tempPath := entrytable_path + ".tmp." + fmt.Sprintf("%d", time.Now().UnixNano())
-	newFile, err := os.Create(tempPath)
-	if err != nil {
-		return nil, err
-	}
-	defer newFile.Close()
-
-	decoder := json.NewDecoder(oldFile)
-	encoder := json.NewEncoder(newFile)
-
-	var movedNode *NodeEntry
-
-	for {
-		var node NodeEntry
-		if err := decoder.Decode(&node); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, err
-		}
-
-		if node.Path == srcPath && node.Type == "file" {
-			node.Path = remote
-			node.Name = filepath.Base(remote)
-			nodeCopy := node
-			movedNode = &nodeCopy
-		}
-
-		if err := encoder.Encode(node); err != nil {
-			return nil, err
-		}
-	}
-
-	if movedNode == nil {
-		os.Remove(tempPath)
-		return nil, fs.ErrorObjectNotFound
-	}
-
-	oldFile.Close()
-	newFile.Close()
-
-	if err := os.Rename(tempPath, entrytable_path); err != nil {
-		os.Remove(tempPath)
-		return nil, err
-	}
-
-	// Rename local cache file
-	oldLocalPath, err1 := f.MakeOSDownloadPath(srcPath)
-	newLocalPath, err2 := f.MakeOSDownloadPath(remote)
-	if err1 == nil && err2 == nil {
-		if _, err := os.Stat(oldLocalPath); err == nil {
-			// Ensure the destination directory exists
-			os.MkdirAll(filepath.Dir(newLocalPath), 0755)
-			// Rename the local cache
-			if err := os.Rename(oldLocalPath, newLocalPath); err != nil {
-				fmt.Printf("UNIC: Move: failed to rename local cache file from %s to %s: %v\n", oldLocalPath, newLocalPath, err)
-			} else {
-				fmt.Printf("UNIC: Move: successfully renamed local cache file from %s to %s\n", oldLocalPath, newLocalPath)
-			}
-		}
-	}
-
 	return f.newObject(ctx, remote, movedNode)
 }
 
+// RenameLocalCache renames the local cache file and the entry in the table
+func (f *Fs) RenameLocalCache(oldPath, newPath string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	_ = f.RenameLocalCachePhysical(oldPath, newPath)
+	_ = renameInDatamap(oldPath, newPath)
+	_ = renameNodeInTable(oldPath, newPath)
+	return nil
+}
+
+func (f *Fs) RenameLocalCachePhysical(oldPath, newPath string) error {
+	oldPath = strings.TrimPrefix(oldPath, "/")
+	newPath = strings.TrimPrefix(newPath, "/")
+
+	oldLocalPath, err1 := f.MakeOSDownloadPath(oldPath)
+	newLocalPath, err2 := f.MakeOSDownloadPath(newPath)
+	if err1 != nil || err2 != nil {
+		return nil
+	}
+
+	if _, err := os.Stat(oldLocalPath); err == nil {
+		os.MkdirAll(filepath.Dir(newLocalPath), 0755)
+		if err := os.Rename(oldLocalPath, newLocalPath); err == nil {
+			fmt.Printf("UNIC: renameLocalCachePhysical: successfully renamed %s -> %s\n", oldLocalPath, newLocalPath)
+		}
+	}
+	return nil
+}
+
 func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	fmt.Printf("%s [%s] UNIC: DirMove: DirMove method Start. srcRemote: %s, dstRemote: %s\n", time.Now().Format("15:04:05.000"), srcRemote, srcRemote, dstRemote)
 
 	if src.Name() != f.Name() || src.Root() != f.Root() {
@@ -813,24 +945,26 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 	}
 	defer newFile.Close()
 
-	decoder := json.NewDecoder(oldFile)
+	scanner := bufio.NewScanner(oldFile)
 	encoder := json.NewEncoder(newFile)
 
-	for {
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
 		var node NodeEntry
-		if err := decoder.Decode(&node); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
+		if err := json.Unmarshal(line, &node); err != nil {
+			continue
 		}
 
-		if node.Path == srcRemote || isUnderDir(node.Path, srcRemote) {
-			if node.Path == srcRemote {
+		nodePath := strings.TrimPrefix(node.Path, "/")
+		if nodePath == srcRemote || isUnderDir(nodePath, srcRemote) {
+			if nodePath == srcRemote {
 				node.Path = dstRemote
 				node.Name = filepath.Base(dstRemote)
 			} else {
-				node.Path = dstRemote + "/" + strings.TrimPrefix(node.Path, srcRemote+"/")
+				node.Path = dstRemote + "/" + strings.TrimPrefix(nodePath, srcRemote+"/")
 				node.Name = filepath.Base(node.Path)
 			}
 		}
@@ -899,8 +1033,53 @@ func (o *Object) Size() int64 {
 func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) { return "", nil }
 func (o *Object) Storable() bool                                         { return true }
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
+	o.fs.mu.Lock()
+	defer o.fs.mu.Unlock()
+
 	o.modTime = t
-	return nil
+
+	// entrytable.jsonl 갱신
+	oldFile, err := os.Open(entrytable_path)
+	if err != nil {
+		return err
+	}
+	defer oldFile.Close()
+
+	tempPath := entrytable_path + ".tmp." + fmt.Sprintf("%d", time.Now().UnixNano())
+	newFile, err := os.Create(tempPath)
+	if err != nil {
+		return err
+	}
+	defer newFile.Close()
+
+	scanner := bufio.NewScanner(oldFile)
+	encoder := json.NewEncoder(newFile)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var node NodeEntry
+		if err := json.Unmarshal(line, &node); err != nil {
+			continue
+		}
+
+		// 해당 파일의 ModTime 갱신
+		if strings.TrimPrefix(node.Path, "/") == strings.TrimPrefix(o.remote, "/") && node.Type == "file" {
+			node.ModTime = t
+		}
+
+		if err := encoder.Encode(node); err != nil {
+			_ = os.Remove(tempPath)
+			return err
+		}
+	}
+
+	oldFile.Close()
+	newFile.Close()
+
+	return os.Rename(tempPath, entrytable_path)
 }
 
 // mount 시 캐시 초기화
@@ -1055,6 +1234,8 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 
 // UNIC을 마운팅한 mount point에 unlink system call이 들어올 때 실행
 func (o *Object) Remove(ctx context.Context) error {
+	o.fs.mu.Lock()
+	defer o.fs.mu.Unlock()
 	fmt.Printf("%s UNIC: Remove: Remove method start\n", time.Now().Format("15:04:05.000"))
 
 	// dis_rm 수행
@@ -1067,6 +1248,12 @@ func (o *Object) Remove(ctx context.Context) error {
 	}
 
 	//fmt.Println("UNIC: Remove: Remove Success")
+
+	// dis_rm 수행 후 entrytable.jsonl에서 해당 파일 항목 삭제
+	err = removeNodeFromTable(o.remote)
+	if err != nil {
+		fs.Errorf(o.remote, "UNIC: Remove: failed to remove from entrytable: %v", err)
+	}
 
 	// 파일 삭제 후 부모 디렉토리 수정시간 갱신 (unlink)
 	_ = updateParentDirModTime(o.remote, time.Now())
@@ -1100,4 +1287,22 @@ func (d *Directory) Items() int64 {
 
 func (d *Directory) ID() string {
 	return fmt.Sprintf("%s", d.id)
+}
+
+// RemoveLocalCache removes the local cache file and the entry in the table
+func (f *Fs) RemoveLocalCache(path string) error {
+	path = strings.TrimPrefix(path, "/")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	localPath, err := f.MakeOSDownloadPath(path)
+	if err == nil {
+		if _, err := os.Stat(localPath); err == nil {
+			_ = os.Remove(localPath)
+			fmt.Printf("UNIC: RemoveLocalCache: successfully removed local file %s\n", localPath)
+		}
+	}
+
+	_ = removeNodeFromTable(path)
+	return nil
 }
