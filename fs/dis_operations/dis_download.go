@@ -241,7 +241,7 @@ func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mu
 
 	// 🌟 [핵심 변경] sharing.json(또는 FileInfo)에서 받아온 drive_id가 있는지 확인합니다.
 	targetDriveId, hasSharedDriveId := driveIdMap[fileInfo.Remote.Name]
-	targetFolderId, hasSharedFolderId := folderIdMap[fileInfo.Remote.Name]
+	targetFolderId, hasFolderId := folderIdMap[fileInfo.Remote.Name]
 	fmt.Printf("folderIdMap: %v\n", folderIdMap)
 
 	if hasSharedDriveId && fileInfo.Remote.Type == "onedrive" {
@@ -253,12 +253,13 @@ func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mu
 		// 🌟 [핵심 수정] 잃어버렸던 remoteDirectory와 fileId 경로를 다시 복구합니다!
 		source = fmt.Sprintf("%s,drive_id=%s,root_folder_id=%s:",
 			fileInfo.Remote.Name, actualDriveId, targetFolderId)
-	} else if hasSharedFolderId && fileInfo.Remote.Type == "drive" {
-		source = fmt.Sprintf("%s,root_folder_id='%s':%s",
-			fileInfo.Remote.Name, targetFolderId, hashedFileName)
 	} else {
-		source = fmt.Sprintf("%s:%s/%s/%s",
-			fileInfo.Remote.Name, remoteDirectory, fileId, hashedFileName)
+		if hasFolderId {
+			source = fmt.Sprintf("%s,root_folder_id=%s:",
+				fileInfo.Remote.Name, targetFolderId)
+		} else {
+			fmt.Printf("Error: No folder ID found for remote %s\n", fileInfo.Remote.Name)
+		}
 	}
 
 	fmt.Printf("Downloading shard %s to %s\n", source, shardDir)
