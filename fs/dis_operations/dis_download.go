@@ -239,28 +239,28 @@ func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mu
 
 	var source string
 
-	// 🌟 [핵심 변경] sharing.json(또는 FileInfo)에서 받아온 drive_id가 있는지 확인합니다.
 	targetDriveId, hasSharedDriveId := driveIdMap[fileInfo.Remote.Name]
 	targetFolderId, hasFolderId := folderIdMap[fileInfo.Remote.Name]
 	fmt.Printf("folderIdMap: %v\n", folderIdMap)
 
-	if hasSharedDriveId && fileInfo.Remote.Type == "onedrive" {
+	switch {
+	case hasSharedDriveId && fileInfo.Remote.Type == "onedrive":
+		// 공유 OneDrive: sharing.json의 drive_id + root_folder_id로 폴더 루트 오버라이드
 		actualDriveId := targetDriveId
 		if strings.Contains(targetFolderId, "!") {
 			actualDriveId = strings.Split(targetFolderId, "!")[0]
 		}
-
-		// 🌟 [핵심 수정] 잃어버렸던 remoteDirectory와 fileId 경로를 다시 복구합니다!
 		source = fmt.Sprintf("%s,drive_id=%s,root_folder_id=%s:",
 			fileInfo.Remote.Name, actualDriveId, targetFolderId)
-	} else {
-		if hasFolderId && fileInfo.Remote.Type == "drive" {
-			source = fmt.Sprintf("%s,root_folder_id=%s:",
-				fileInfo.Remote.Name, targetFolderId)
-		} else if fileInfo.Remote.Type == "dropbox" {
-			source = fmt.Sprintf("%s:/%s",
-				fileInfo.Remote.Name, fileId)
-		}
+	case hasFolderId && fileInfo.Remote.Type == "drive":
+		// 공유 Google Drive: sharing.json의 root_folder_id로 폴더 루트 오버라이드
+		source = fmt.Sprintf("%s,root_folder_id=%s:",
+			fileInfo.Remote.Name, targetFolderId)
+	default:
+		// 일반 다운로드(datamap.json) 및 공유 Dropbox:
+		// 업로드 시 저장 경로 Distribution/{fileId}/{hashedFileName} 그대로 사용
+		source = fmt.Sprintf("%s:%s/%s/%s",
+			fileInfo.Remote.Name, remoteDirectory, fileId, hashedFileName)
 	}
 
 	fmt.Printf("Downloading shard %s to %s\n", source, shardDir)
