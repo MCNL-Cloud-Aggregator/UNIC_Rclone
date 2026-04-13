@@ -87,8 +87,11 @@ func DeleteShardDir() {
 	}
 }
 
-func calculateShardsNum(filename string) {
+func calculateShardsNum(filename string) (int, int) {
 	const minSize = 10 * 1024 * 1024
+
+	data := *dataShards
+	par := *parShards
 
 	fileInfo, err := os.Stat(filename)
 	checkErr(err)
@@ -96,16 +99,15 @@ func calculateShardsNum(filename string) {
 	fileSize := fileInfo.Size()
 
 	if fileSize < minSize {
-		*dataShards = 5
-		*parShards = 3
+		data = 5
+		par = 3
 	} else {
-
-		for fileSize/int64(*dataShards) < minSize && *dataShards > 10 {
-			*dataShards -= 10
+		for fileSize/int64(data) < minSize && data > 10 {
+			data -= 10
 		}
-
-		*parShards = *dataShards / 2
+		par = data / 2
 	}
+	return data, par
 }
 
 func DoEncode(fname string, fileId string, password string) ([]string, []string, int64, int64, int, int) {
@@ -121,20 +123,20 @@ func DoEncode(fname string, fileId string, password string) ([]string, []string,
 		checkErr(err)
 	}
 
-	calculateShardsNum(fname)
+	dShards, pShards := calculateShardsNum(fname)
 
 	// Encrypt the file
 	encFile, err := app.Encrypt(fname, v2.Passphrase(password))
 	fmt.Printf("encFile name: %s\n", encFile)
 	checkErr(err)
 
-	if (*dataShards + *parShards) > 256 {
+	if (dShards + pShards) > 256 {
 		fmt.Fprintf(os.Stderr, "Error: sum of data and parity shards cannot exceed 256\n")
 		os.Exit(1)
 	}
 
 	// Create encoding matrix.
-	enc, err := NewStream(*dataShards, *parShards)
+	enc, err := NewStream(dShards, pShards)
 	checkErr(err)
 
 	fmt.Println("Opening", encFile)
@@ -144,7 +146,7 @@ func DoEncode(fname string, fileId string, password string) ([]string, []string,
 	instat, err := f.Stat()
 	checkErr(err)
 
-	shards := *dataShards + *parShards
+	shards := dShards + pShards
 	out := make([]*os.File, shards)
 
 	//// Create the resulting files.
@@ -166,7 +168,7 @@ func DoEncode(fname string, fileId string, password string) ([]string, []string,
 	}
 
 	// Split into files.
-	data := make([]io.Writer, *dataShards)
+	data := make([]io.Writer, dShards)
 	for i := range data {
 		data[i] = out[i]
 	}
@@ -176,7 +178,7 @@ func DoEncode(fname string, fileId string, password string) ([]string, []string,
 	checkErr(err)
 
 	// Close and re-open the files.
-	input := make([]io.Reader, *dataShards)
+	input := make([]io.Reader, dShards)
 
 	for i := range data {
 		out[i].Close()
@@ -194,9 +196,9 @@ func DoEncode(fname string, fileId string, password string) ([]string, []string,
 	}
 
 	// Create parity output writers
-	parity := make([]io.Writer, *parShards)
+	parity := make([]io.Writer, pShards)
 	for i := range parity {
-		parity[i] = out[*dataShards+i]
+		parity[i] = out[dShards+i]
 		// defer out[*dataShards+i].Close()
 	}
 
@@ -214,12 +216,12 @@ func DoEncode(fname string, fileId string, password string) ([]string, []string,
 	// Encode parity
 	err = enc.Encode(input, parity)
 	checkErr(err)
-	fmt.Printf("File split into %d data + %d parity shards.\n", *dataShards, *parShards)
+	fmt.Printf("File split into %d data + %d parity shards.\n", dShards, pShards)
 
 	//Calculate Shard Checksums.
 	for i := range parity {
-		out[*dataShards+i].Close()
-		checksum, err := calculateChecksum(out[*dataShards+i].Name())
+		out[dShards+i].Close()
+		checksum, err := calculateChecksum(out[dShards+i].Name())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: calculating checksum\n")
 			os.Exit(1)
@@ -231,7 +233,7 @@ func DoEncode(fname string, fileId string, password string) ([]string, []string,
 	err = os.Remove(encFile)
 	checkErr(err)
 
-	return paths, checksums, sizePerShard, padding, *dataShards, *parShards
+	return paths, checksums, sizePerShard, padding, dShards, pShards
 }
 
 func trimPadding(f *os.File, trimSize int64) {
