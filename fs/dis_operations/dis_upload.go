@@ -141,8 +141,8 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 	//fmt.Println("server 작업 완료...")
 
 	start := time.Now()
-
-	if err := startUploadFileGoroutine_Worker(fileId, hashedNamesMap, distributedFileArray, loadBalancer, 32); err != nil {
+	// Optimized: reduce workerCount from 32 to 8 to avoid cloud rate limits
+	if err := startUploadFileGoroutine_Worker(fileId, hashedNamesMap, distributedFileArray, loadBalancer, 8); err != nil {
 		return err
 	}
 
@@ -273,12 +273,8 @@ func uploadFile(source, dest string, mu *sync.Mutex, totalThroughput *float64, f
 
 func updateRemoteInfo_Up(fileId string, shardInfo DistributedFile, throughputKbps float64, mu *sync.Mutex) error {
 	mu.Lock()
-	err := UpdateDistributedFile_CheckFlagAndRemote(fileId, shardInfo.DistributedFile, true, shardInfo.Remote)
-	if err != nil {
-		mu.Unlock()
-		return fmt.Errorf("UpdateDistributedFileCheckFlag error: %v", err)
-	}
-	err = UpdateRemoteInfo(shardInfo.Remote, func(b *RemoteInfo) {
+	// Removed: UpdateDistributedFile_CheckFlagAndRemote (Optimized to batch update at the end)
+	err := UpdateRemoteInfo(shardInfo.Remote, func(b *RemoteInfo) {
 		b.UpdateThroughput(throughputKbps, 0)
 	})
 	mu.Unlock()
@@ -288,7 +284,7 @@ func updateRemoteInfo_Up(fileId string, shardInfo DistributedFile, throughputKbp
 	return nil
 }
 
-func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string]string, distributedFileArray []DistributedFile, loadBalancer LoadBalancerType, workerCount int) (err error) {
+func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string]string, distributedFileArray []DistributedFile, loadBalancer LoadBalancerType, totalWorkerCount int) (err error) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var errs []error
@@ -296,51 +292,63 @@ func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string
 	var totalThroughput float64
 	var fileCount int
 
-	jobs := make(chan DistributedFile, len(distributedFileArray))
+	// 1. Group shards by Remote Name
+	shardsByRemote := make(map[string][]DistributedFile)
+	for _, shard := range distributedFileArray {
+		// Allocate Remote first to know where it goes
+		if err := shard.AllocateRemote(loadBalancer); err != nil {
+			return fmt.Errorf("AllocateRemote error: %v", err)
+		}
+		shardsByRemote[shard.Remote.Name] = append(shardsByRemote[shard.Remote.Name], shard)
+	}
 
-	// Worker function
-	uploader := func() {
-		defer wg.Done()
-		for shardInfo := range jobs {
-			// Allocate Remote
+	var completedShards []DistributedFile
+
+	// 2. Start one dedicated goroutine per Remote Provider
+	for remoteName, shards := range shardsByRemote {
+		wg.Add(1)
+		go func(name string, shardList []DistributedFile) {
+			defer wg.Done()
+			fmt.Printf("[UNIC] Starting batch upload for provider: %s (%d shards)\n", name, len(shardList))
+
+			for _, shardInfo := range shardList {
+				dest := fmt.Sprintf("%s:%s/%s", shardInfo.Remote.Name, remoteDirectory, fileId)
+				source := filepath.Join(dir, hashedFileNameMap[shardInfo.DistributedFile])
+
+				// Upload file (Sequential within this provider's goroutine)
+				// Note: uploadFile uses mu to update global throughput and file count
+				err := uploadFile(source, dest, &mu, &totalThroughput, &fileCount, &errs, fileId, shardInfo, hashedFileNameMap)
+				if err != nil {
+					mu.Lock()
+					errs = append(errs, fmt.Errorf("[%s] upload error: %v", name, err))
+					mu.Unlock()
+					continue // Try next shard anyway
+				}
+
+				// Record success
+				mu.Lock()
+				completedShards = append(completedShards, shardInfo)
+				mu.Unlock()
+			}
+			fmt.Printf("[UNIC] Completed batch upload for provider: %s\n", name)
+		}(remoteName, shards)
+	}
+
+	wg.Wait() // Wait for all provider goroutines to finish
+
+	// 3. Batch update datamap one time
+	if len(completedShards) > 0 {
+		if batchErr := BatchUpdateDistributedFiles(fileId, completedShards); batchErr != nil {
 			mu.Lock()
-			err := shardInfo.AllocateRemote(loadBalancer)
+			errs = append(errs, fmt.Errorf("BatchUpdateDistributedFiles error: %v", batchErr))
 			mu.Unlock()
-			if err != nil {
-				mu.Lock()
-				errs = append(errs, fmt.Errorf("AllocateRemote error: %v", err))
-				mu.Unlock()
-				continue
-			}
-
-			dest := fmt.Sprintf("%s:%s/%s", shardInfo.Remote.Name, remoteDirectory, fileId)
-			source := filepath.Join(dir, hashedFileNameMap[shardInfo.DistributedFile])
-
-			// Upload file and calculate throughput
-			err = uploadFile(source, dest, &mu, &totalThroughput, &fileCount, &errs, fileId, shardInfo, hashedFileNameMap)
-			if err != nil {
-				mu.Lock()
-				errs = append(errs, err)
-				mu.Unlock()
-			}
 		}
 	}
 
-	// Start worker goroutines
-	for i := 0; i < workerCount; i++ {
-		wg.Add(1)
-		go uploader()
+	averageThroughput := float64(0)
+	if fileCount > 0 {
+		averageThroughput = totalThroughput / float64(fileCount)
 	}
-
-	// Send jobs to workers
-	for _, shardInfo := range distributedFileArray {
-		jobs <- shardInfo
-	}
-
-	close(jobs) // Close channel to signal workers
-	wg.Wait()   // Wait for all workers to finish
-
-	averageThroughput := totalThroughput / float64(fileCount)
 	fmt.Printf("Average Throughput: %f Kbps\n", averageThroughput)
 	fmt.Println("Current Time:", time.Now().Format("2006-01-02 15:04:05"))
 
