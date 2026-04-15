@@ -110,6 +110,8 @@ func GetDistributedInfo(fileName string, remote Remote, checksum string, target 
 
 // making file info about original file
 func MakeDataMap(originalFilePath string, backendRemote string, fileId string, distributedFiles []DistributedFile, disFileSize int64, paddingAmount int64, shard int, parity int, remoteList []config.Remote) error {
+	jsonFileMutex.Lock()
+	defer jsonFileMutex.Unlock()
 	if originalFilePath == "" {
 		return errors.New("originalFilePath cannot be empty")
 	}
@@ -582,6 +584,42 @@ func UpdateDistributedFile_CheckFlagAndRemote(fileId, distributedFileName string
 		dFile.Remote = remote
 		return nil
 	})
+}
+
+// BatchUpdateDistributedFiles updates multiple shards for a single file in one File I/O operation
+func BatchUpdateDistributedFiles(fileId string, updates []DistributedFile) error {
+	jsonFileMutex.Lock()
+	defer jsonFileMutex.Unlock()
+
+	filesMap, err := readJsonFile()
+	if err != nil {
+		return fmt.Errorf("failed to read JSON file: %v", err)
+	}
+
+	fileInfo, exists := filesMap[fileId]
+	if !exists {
+		return fmt.Errorf("file '%s' not found", fileId)
+	}
+
+	for _, updatedDFile := range updates {
+		fileName := updatedDFile.DistributedFile
+		if _, ok := fileInfo.DistributedFileInfos[fileName]; ok {
+			// Update flags and remote info
+			dFile := fileInfo.DistributedFileInfos[fileName]
+			dFile.Check = true
+			dFile.Remote = updatedDFile.Remote
+			fileInfo.DistributedFileInfos[fileName] = dFile
+		}
+	}
+
+	filesMap[fileId] = fileInfo
+
+	err = writeJsonFile(getJsonFilePath(), filesMap)
+	if err != nil {
+		return fmt.Errorf("failed to write updated JSON: %v", err)
+	}
+
+	return nil
 }
 
 // resetting file check flag after finishing operation
