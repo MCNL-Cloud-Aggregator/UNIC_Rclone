@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -58,6 +57,7 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 	var distributedFileArray []DistributedFile
 	hashedNamesMap := make(map[string]string)
 
+	var sessions map[string]fs.Fs
 	if reSignal {
 		tempDistributedFileArray, err := GetDistributedFileStruct(fileId)
 		if err != nil {
@@ -73,6 +73,22 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 				}
 				hashedNamesMap[dFile.DistributedFile] = hashVal
 			}
+		}
+
+		// Initialize sessions for re-signal path
+		remotes := func() []config.Remote {
+			if target.UseConfig {
+				return config.GetRemotes()
+			}
+			return target.Remotes
+		}()
+		sessions, err = initRemoteSessions(remotes, fileId)
+		if err != nil {
+			return err
+		}
+		err = MakeDistributionDir(sessions)
+		if err != nil {
+			return err
 		}
 	} else {
 		// Uncomment this to allow duplicate check
@@ -98,7 +114,7 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 			}
 		}
 
-		hashedNamesMap, distributedFileArray, err = prepareUpload(absolutePath, backendRemote, fileId, target)
+		hashedNamesMap, distributedFileArray, sessions, err = prepareUpload(absolutePath, backendRemote, fileId, target)
 		if err != nil {
 			return err
 		}
@@ -142,7 +158,7 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 
 	start := time.Now()
 	// Optimized: reduce workerCount from 32 to 8 to avoid cloud rate limits
-	if err := startUploadFileGoroutine_Worker(fileId, hashedNamesMap, distributedFileArray, loadBalancer, 8); err != nil {
+	if err := startUploadFileGoroutine_Worker(fileId, hashedNamesMap, distributedFileArray, loadBalancer, 8, sessions); err != nil {
 		return err
 	}
 
@@ -181,7 +197,7 @@ func createHashNames(distributedFileArray []DistributedFile) (hashNameMap map[st
 	return hashNameMap, errs
 }
 
-func prepareUpload(absolutePath string, backendRemote string, fileId string, target UploadTargets) (hashNameMap map[string]string, distributedFileInfos []DistributedFile, err error) {
+func prepareUpload(absolutePath string, backendRemote string, fileId string, target UploadTargets) (hashNameMap map[string]string, distributedFileInfos []DistributedFile, sessions map[string]fs.Fs, err error) {
 	dis_names, checksums, shardSize, padding, shard, parity := reedsolomon.DoEncode(absolutePath, fileId, TryGetPassword())
 	fmt.Println("Shard:", shard)
 	fmt.Println("Parity:", parity)
@@ -193,9 +209,13 @@ func prepareUpload(absolutePath string, backendRemote string, fileId string, tar
 		return target.Remotes
 	}()
 
-	err = MakeDistributionDir(remotes, fileId)
+	sessions, err = initRemoteSessions(remotes, fileId)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	err = MakeDistributionDir(sessions)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	// get Distributed info
@@ -205,7 +225,7 @@ func prepareUpload(absolutePath string, backendRemote string, fileId string, tar
 		// Get the distributed info (Remote is filled at distribution-time)
 		distributionFile, err := GetDistributedInfo(dis_fileName, Remote{}, checksums[idx], target)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		distributedFileInfos = append(distributedFileInfos, distributionFile)
@@ -214,19 +234,20 @@ func prepareUpload(absolutePath string, backendRemote string, fileId string, tar
 
 	hashNameMap, errs := createHashNames(distributedFileInfos)
 	if len(errs) > 0 {
-		return nil, nil, fmt.Errorf("errors occurred during hashing: %v", errs)
+		return nil, nil, nil, fmt.Errorf("errors occurred during hashing: %v", errs)
 	}
 
 	err = MakeDataMap(absolutePath, backendRemote, fileId, distributedFileInfos, shardSize, padding, shard, parity, remotes)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	return hashNameMap, distributedFileInfos, nil
+	return hashNameMap, distributedFileInfos, sessions, nil
 }
 
-func uploadFile(source, dest string, mu *sync.Mutex, totalThroughput *float64, fileCount *int, errs *[]error, fileId string, shardInfo DistributedFile, hashedFileNameMap map[string]string) error {
-	// Get file info
+func uploadFile(fsrc, fdst fs.Fs, shardFileName string, mu *sync.Mutex, totalThroughput *float64, fileCount *int, errs *[]error, fileId string, shardInfo DistributedFile, hashedFileNameMap map[string]string) error {
+	// Get file info for throughput calculation
+	source := filepath.Join(GetShardPath(), shardFileName)
 	fileInfo, err := os.Stat(source)
 	if err != nil {
 		mu.Lock()
@@ -238,10 +259,11 @@ func uploadFile(source, dest string, mu *sync.Mutex, totalThroughput *float64, f
 
 	// Measure time for upload
 	startTime := time.Now()
-	err = remoteCallCopy([]string{source, dest})
+	// Use operations.CopyFile directly with the reused sessions
+	err = operations.CopyFile(context.Background(), fdst, fsrc, shardFileName, shardFileName)
 	if err != nil {
 		mu.Lock()
-		*errs = append(*errs, fmt.Errorf("error in remoteCallCopy for file %s: %w", source, err))
+		*errs = append(*errs, fmt.Errorf("error in operations.CopyFile for file %s: %w", shardFileName, err))
 		mu.Unlock()
 		return err
 	}
@@ -265,7 +287,7 @@ func uploadFile(source, dest string, mu *sync.Mutex, totalThroughput *float64, f
 
 	// Erase temp shard
 	mu.Lock()
-	reedsolomon.DeleteShardWithFileNames([]string{hashedFileNameMap[shardInfo.DistributedFile]})
+	reedsolomon.DeleteShardWithFileNames([]string{shardFileName})
 	mu.Unlock()
 
 	return nil
@@ -284,13 +306,19 @@ func updateRemoteInfo_Up(fileId string, shardInfo DistributedFile, throughputKbp
 	return nil
 }
 
-func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string]string, distributedFileArray []DistributedFile, loadBalancer LoadBalancerType, totalWorkerCount int) (err error) {
+func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string]string, distributedFileArray []DistributedFile, loadBalancer LoadBalancerType, totalWorkerCount int, sessions map[string]fs.Fs) (err error) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var errs []error
 	dir := GetShardPath()
 	var totalThroughput float64
 	var fileCount int
+
+	// Initialize local source session once
+	fsrc, err := fs.NewFs(context.Background(), dir)
+	if err != nil {
+		return fmt.Errorf("failed to create local source session: %v", err)
+	}
 
 	// 1. Group shards by Remote Name
 	shardsByRemote := make(map[string][]DistributedFile)
@@ -306,18 +334,23 @@ func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string
 
 	// 2. Start one dedicated goroutine per Remote Provider
 	for remoteName, shards := range shardsByRemote {
+		fdst, ok := sessions[remoteName]
+		if !ok {
+			// If session doesn't exist for some reason, create it on the fly (though it should exist from MakeDistributionDir)
+			arg := fmt.Sprintf("%s:%s/%s", remoteName, remoteDirectory, fileId)
+			fdst = cmd.NewFsDir([]string{arg})
+		}
+
 		wg.Add(1)
-		go func(name string, shardList []DistributedFile) {
+		go func(name string, shardList []DistributedFile, remoteFs fs.Fs) {
 			defer wg.Done()
 			fmt.Printf("[UNIC] Starting batch upload for provider: %s (%d shards)\n", name, len(shardList))
 
 			for _, shardInfo := range shardList {
-				dest := fmt.Sprintf("%s:%s/%s", shardInfo.Remote.Name, remoteDirectory, fileId)
-				source := filepath.Join(dir, hashedFileNameMap[shardInfo.DistributedFile])
+				shardFileName := hashedFileNameMap[shardInfo.DistributedFile]
 
 				// Upload file (Sequential within this provider's goroutine)
-				// Note: uploadFile uses mu to update global throughput and file count
-				err := uploadFile(source, dest, &mu, &totalThroughput, &fileCount, &errs, fileId, shardInfo, hashedFileNameMap)
+				err := uploadFile(fsrc, remoteFs, shardFileName, &mu, &totalThroughput, &fileCount, &errs, fileId, shardInfo, hashedFileNameMap)
 				if err != nil {
 					mu.Lock()
 					errs = append(errs, fmt.Errorf("[%s] upload error: %v", name, err))
@@ -331,7 +364,7 @@ func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string
 				mu.Unlock()
 			}
 			fmt.Printf("[UNIC] Completed batch upload for provider: %s\n", name)
-		}(remoteName, shards)
+		}(remoteName, shards, fdst)
 	}
 
 	wg.Wait() // Wait for all provider goroutines to finish
@@ -358,159 +391,57 @@ func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string
 	return nil
 }
 
-func startUploadFileGoroutine(fileId string, hashedFileNameMap map[string]string, distributedFileArray []DistributedFile, loadBalancer LoadBalancerType) (err error) {
+func initRemoteSessions(remotes []config.Remote, fileId string) (map[string]fs.Fs, error) {
+	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var wg sync.WaitGroup
-	var errs []error
-	dir := GetShardPath()
+	sessions := make(map[string]fs.Fs)
 
-	var totalThroughput float64 // Accumulates total throughput
-	var fileCount int           // Counts number of uploaded files
-
-	for _, shardInfo := range distributedFileArray {
-		wg.Add(1)
-
-		go func(shardInfo DistributedFile, loadBalancer LoadBalancerType) {
-			defer wg.Done()
-
-			// Allocate Remote
-			mu.Lock()
-			err := shardInfo.AllocateRemote(loadBalancer)
-			mu.Unlock()
-			if err != nil {
-				mu.Lock()
-				errs = append(errs, err)
-				mu.Unlock()
-				return
-			}
-
-			dest := fmt.Sprintf("%s:%s/%s", shardInfo.Remote.Name, remoteDirectory, fileId)
-			source := filepath.Join(dir, hashedFileNameMap[shardInfo.DistributedFile])
-
-			// Upload file and calculate throughput
-			err = uploadFile(source, dest, &mu, &totalThroughput, &fileCount, &errs, fileId, shardInfo, hashedFileNameMap)
-			if err != nil {
-				mu.Lock()
-				errs = append(errs, err)
-				mu.Unlock()
-			}
-
-		}(shardInfo, loadBalancer)
-	}
-
-	wg.Wait()
-
-	averageThroughput := totalThroughput / float64(fileCount)
-
-	fmt.Printf("Average Throughput: %f Kbps\n", averageThroughput)
-	fmt.Println("Current Time:", time.Now().Format("2006-01-02 15:04:05"))
-
-	if len(errs) > 0 {
-		return fmt.Errorf("errors occurred: %v", errs)
-	}
-	return nil
-}
-
-func MakeDistributionDir(remotes []config.Remote, fileId string) (err error) {
-	var wg sync.WaitGroup
-	var errs []error
 	for _, remote := range remotes {
 		argument := fmt.Sprintf("%s:%s/%s", remote.Name, remoteDirectory, fileId)
 		wg.Add(1)
 
-		go func(arg string) {
+		go func(remoteName, arg string) {
 			defer wg.Done()
 
-			err := remoteCallMkdir([]string{arg})
+			fdst := cmd.NewFsDir([]string{arg})
+			mu.Lock()
+			sessions[remoteName] = fdst
+			mu.Unlock()
+		}(remote.Name, argument)
+	}
+
+	wg.Wait()
+	return sessions, nil
+}
+
+func MakeDistributionDir(sessions map[string]fs.Fs) error {
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errs []error
+
+	for name, fdst := range sessions {
+		wg.Add(1)
+
+		go func(remoteName string, fsObj fs.Fs) {
+			defer wg.Done()
+
+			err := operations.Mkdir(context.Background(), fsObj, "")
 			if err != nil {
-				errs = append(errs, fmt.Errorf("error creating directory at %s: %w", arg, err))
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("error creating directory on %s: %w", remoteName, err))
+				mu.Unlock()
 				return
 			}
-		}(argument)
+		}(name, fdst)
 	}
 
 	wg.Wait()
 
 	if len(errs) > 0 {
-		return fmt.Errorf("errors occurred: %v", errs)
+		return fmt.Errorf("errors occurred during mkdir: %v", errs)
 	}
 
 	return nil
-}
-
-// copyCommand.Execute() method를 사용하면 프로그램 전체를 재시작 하는데
-// 이 때 CLI 환경을 통해 OS가 넘겨준 명령어를 재실행하게 됨.
-// UNIC의 경우 ./rclone mount ... 명령을 재실행하게 되는데
-// 이 때 mount가 이미 되어있는 경로에 대해 mount를 다시 한번 실행하므로 오류 발생 및 마운트 해제
-// 따라서 copyACommand.Execute()가 아닌 operations.mkdir() method를 실행해야 함.
-func remoteCallCopy(args []string) (err error) {
-	fmt.Printf("Calling remoteCallCopy with args: %v\n", args)
-
-	//// Fetch the copy command
-	//copyCommand := *copyCommandDefinition
-	//copyCommand.SetArgs(args)
-
-	//err = copyCommand.Execute()
-	//if err != nil {
-	//	return fmt.Errorf("error executing copyCommand: %w", err)
-	//}
-
-	fsrc, srcFileName, fdst := cmd.NewFsSrcFileDst(args)
-	if srcFileName == "" {
-		return rsync.CopyDir(context.Background(), fdst, fsrc, createEmptySrcDirs)
-	}
-	return operations.CopyFile(context.Background(), fdst, fsrc, srcFileName, srcFileName)
-}
-
-func logThroughput(totalThroughput float64, fileCount int) {
-	if fileCount > 0 {
-		averageThroughput := totalThroughput / float64(fileCount)
-		fmt.Printf("Average Throughput: %f Kbps\n", averageThroughput)
-	}
-	fmt.Println("Current Time:", time.Now().Format("2006-01-02 15:04:05"))
-}
-
-// copyCommand.Execute() method를 사용하면 프로그램 전체를 재시작 하는데
-// 이 때 CLI 환경을 통해 OS가 넘겨준 명령어를 재실행하게 됨.
-// UNIC의 경우 ./rclone mount ... 명령을 재실행하게 되는데
-// 이 때 mount가 이미 되어있는 경로에 대해 mount를 다시 한번 실행하므로 오류 발생 및 마운트 해제
-// 따라서 copyACommand.Execute()가 아닌 operations.mkdir() method를 실행해야 함.
-func remoteCallMkdir(args []string) (err error) {
-	fmt.Printf("Calling remoteCallMkdir with args: %v\n", args)
-
-	//// Fetch the copy command
-	//copyCommand := *mkdirCommandDefinition
-	//copyCommand.SetArgs(args)
-
-	//err = copyCommand.Execute()
-	//if err != nil {
-	//	return fmt.Errorf("error executing mkdirCommand: %w", err)
-	//}
-
-	fdst := cmd.NewFsDir(args)
-	if !fdst.Features().CanHaveEmptyDirectories && strings.Contains(fdst.Root(), "/") {
-		fs.Logf(fdst, "Warning: running mkdir on a remote which can't have empty directories does nothing")
-	}
-
-	return operations.Mkdir(context.Background(), fdst, "")
-}
-
-var mkdirCommandDefinition = &cobra.Command{
-	Use:   "mkdir remote:path",
-	Short: `Make the path if it doesn't already exist.`,
-	Annotations: map[string]string{
-		"groups": "Important",
-	},
-	Run: func(command *cobra.Command, args []string) {
-		cmd.CheckArgs(1, 1, command, args)
-		fdst := cmd.NewFsDir(args)
-		if !fdst.Features().CanHaveEmptyDirectories && strings.Contains(fdst.Root(), "/") {
-			fs.Logf(fdst, "Warning: running mkdir on a remote which can't have empty directories does nothing")
-		}
-		cmd.RunWithSustainOS(true, false, command, func() error {
-			return operations.Mkdir(context.Background(), fdst, "")
-		}, true)
-	},
 }
 
 func dis_init(arg string) (string, error) {
