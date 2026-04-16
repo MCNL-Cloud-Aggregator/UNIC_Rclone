@@ -158,7 +158,7 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 
 	start := time.Now()
 	// Optimized: reduce workerCount from 32 to 8 to avoid cloud rate limits
-	if err := startUploadFileGoroutine_Worker(fileId, hashedNamesMap, distributedFileArray, loadBalancer, 8, sessions); err != nil {
+	if err := startUploadFileGoroutine_Worker(fileId, hashedNamesMap, distributedFileArray, loadBalancer, sessions); err != nil {
 		return err
 	}
 
@@ -306,7 +306,7 @@ func updateRemoteInfo_Up(fileId string, shardInfo DistributedFile, throughputKbp
 	return nil
 }
 
-func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string]string, distributedFileArray []DistributedFile, loadBalancer LoadBalancerType, totalWorkerCount int, sessions map[string]fs.Fs) (err error) {
+func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string]string, distributedFileArray []DistributedFile, loadBalancer LoadBalancerType, sessions map[string]fs.Fs) (err error) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var errs []error
