@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,7 +12,6 @@ import (
 	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/operations"
-	fsync "github.com/rclone/rclone/fs/sync"
 	"github.com/rclone/rclone/reedsolomon"
 	"github.com/spf13/cobra"
 )
@@ -260,12 +258,12 @@ func downloadFile(fileInfo DistributedFile, fdst fs.Fs, fsrc fs.Fs, fileId strin
 	// Since fsrc might be the base directory or the file itself due to initDownloadSessions logic
 	// we handle the source file name
 	srcFileName := hashedFileName
-	
-	// If the shard used a special share-root connection string, the hashedFileName might not be 
+
+	// If the shard used a special share-root connection string, the hashedFileName might not be
 	// relative to fsrc in the same way. But based on current logic, shards are in Distribution/fileId/
 	// and initDownloadSessions points there for the 'default' case.
 	// For shared drives, it points to the share root.
-	
+
 	err = operations.CopyFile(context.Background(), fdst, fsrc, srcFileName, srcFileName)
 	if err != nil {
 		return fmt.Errorf("CopyFile error: %w", err)
