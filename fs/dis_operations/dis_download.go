@@ -245,32 +245,7 @@ func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, f
 	return nil
 }
 
-func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, fileId string, driveIdMap map[string]string, folderIdMap map[string]string) (err error) {
-	shardDir, err := reedsolomon.GetShardDir()
-	if err != nil {
-		return err
-	}
-
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var errs []error
-
-	for _, fileInfo := range distributedFileInfos {
-		wg.Add(1)
-		go func(fileInfo DistributedFile) {
-			defer wg.Done()
-			if err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs, driveIdMap, folderIdMap); err != nil {
-				mu.Lock()
-				errs = append(errs, err)
-				mu.Unlock()
-			}
-		}(fileInfo)
-	}
-
-	wg.Wait()
-
-	return nil
-}
+// Legacy function startDownloadFileGoroutine removed as it was replaced by startDownloadFileGoroutine_Worker
 
 func downloadFile(fileInfo DistributedFile, fdst fs.Fs, fsrc fs.Fs, fileId string, mu *sync.Mutex, errs *[]error) error {
 	startTime := time.Now()
@@ -353,56 +328,4 @@ func getAbsolutePath(arg string) (string, error) {
 	return filepath.Clean(destinationPath), nil
 }
 
-func remoteCallCopyforDown(args []string) error {
-	if len(args) < 2 {
-		return fmt.Errorf("invalid arguments: %v", args)
-	}
-
-	ctx := context.Background()
-	srcString := args[0] // 예: my_dropbox:Distribution/hash_val
-	dstString := args[1] // 예: /home/kali/.config/rclone/shard
-
-	fmt.Printf("🚀 [Pure API Copy] Starting download from %s to %s\n", srcString, dstString)
-
-	// 1. 목적지(Destination) 파일시스템(Fs) 객체 생성 (로컬 폴더)
-	fdst, err := fs.NewFs(ctx, dstString)
-	if err != nil {
-		return fmt.Errorf("failed to create destination FS: %w", err)
-	}
-
-	// 2. 소스(Source) 파일시스템(Fs) 객체 생성 (클라우드 파편)
-	fsrc, err := fs.NewFs(ctx, srcString)
-
-	// ★ Rclone 엔진의 핵심: 소스 경로가 '파일'인 경우 ErrorIsFile 에러를 뱉음 ★
-	if err == fs.ErrorIsFile {
-		// 이 경우 fsrc는 파일이 들어있는 '부모 폴더'가 됩니다.
-		// 경로의 맨 마지막 부분(파일명)을 추출해서 단일 파일 복사를 수행합니다.
-
-		pathPart := srcString
-		if colonIdx := strings.Index(srcString, ":"); colonIdx != -1 {
-			pathPart = srcString[colonIdx+1:] // ':' 뒷부분만 가져옴
-		}
-
-		// 이제 pathPart에는 'Distribution/hash_val' 또는 'hash_val'만 남습니다.
-		srcFileName := path.Base(pathPart)
-
-		fmt.Printf("🎯 [Debug] 추출된 정확한 파일명: %s\n", srcFileName)
-
-		// Cobra 알바생을 거치지 않고 Rclone 심장부(API)에 직접 파일 복사 지시!
-		err = operations.CopyFile(ctx, fdst, fsrc, srcFileName, srcFileName)
-		if err != nil {
-			return fmt.Errorf("failed to copy file using pure API: %w", err)
-		}
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("failed to create source FS: %w", err)
-	}
-
-	// 3. 만약 파일이 아니라 '폴더' 형태로 들어왔을 경우 (예외 처리)
-	err = fsync.CopyDir(ctx, fdst, fsrc, false)
-	if err != nil {
-		return fmt.Errorf("failed to copy directory using pure API: %w", err)
-	}
-
-	return nil
-}
+// Legacy function remoteCallCopyforDown removed as it was replaced by direct operations.CopyFile calls
