@@ -71,8 +71,15 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 	}
 
 	start := time.Now()
+	fmt.Printf("---initDownloadSessions start---\n")
+	sessions, err := initDownloadSessions(distributedFileInfos, fileId, fileInfoForDriveId.DriveIdMap, fileInfoForDriveId.FolderIdMap)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("---initDownloadSessions end---\n")
+
 	fmt.Printf("---startDownloadFileGoroutine_Worker start---\n")
-	if err := startDownloadFileGoroutine_Worker(distributedFileInfos, fileId, 32, fileInfoForDriveId.DriveIdMap, fileInfoForDriveId.FolderIdMap); err != nil {
+	if err := startDownloadFileGoroutine_Worker(distributedFileInfos, fileId, sessions); err != nil {
 		return err
 	}
 	fmt.Printf("---startDownloadFileGoroutine_Worker end---\n")
@@ -141,58 +148,98 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 	return nil
 }
 
-func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, fileId string, workerCount int, driveIdMap map[string]string, folderIdMap map[string]string) (err error) {
+func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, folderIdMap map[string]string) (map[string]fs.Fs, error) {
+	sessions := make(map[string]fs.Fs)
+	uniqueRemotes := make(map[string]DistributedFile)
+	for _, s := range shards {
+		uniqueRemotes[s.Remote.String()] = s
+	}
+
+	for id, s := range uniqueRemotes {
+		remoteName := s.Remote.Name
+		remoteType := s.Remote.Type
+		targetDriveId, hasSharedDriveId := driveIdMap[remoteName]
+		targetFolderId, hasFolderId := folderIdMap[remoteName]
+
+		var connString string
+		switch {
+		case hasSharedDriveId && remoteType == "onedrive":
+			actualDriveId := targetDriveId
+			if strings.Contains(targetFolderId, "!") {
+				actualDriveId = strings.Split(targetFolderId, "!")[0]
+			}
+			connString = fmt.Sprintf("%s,drive_id=%s,root_folder_id=%s:", remoteName, actualDriveId, targetFolderId)
+		case hasFolderId && remoteType == "drive":
+			connString = fmt.Sprintf("%s,root_folder_id=%s:", remoteName, targetFolderId)
+		default:
+			connString = fmt.Sprintf("%s:%s/%s", remoteName, remoteDirectory, fileId)
+		}
+
+		fsrc, err := fs.NewFs(context.Background(), connString)
+		// fs.ErrorIsFile can happen if the path is interpreted as a file, but we want the parent FS for copying.
+		if err != nil && err != fs.ErrorIsFile {
+			return nil, fmt.Errorf("failed to create session for %s: %w", id, err)
+		}
+		sessions[id] = fsrc
+	}
+	return sessions, nil
+}
+
+func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, fileId string, sessions map[string]fs.Fs) (err error) {
 	fmt.Printf("\n========================================================\n")
-	fmt.Printf("[DL-Pool] 🚀 다운로드 워커 풀 시작! (파일 ID: %s, 워커 수: %d, 파편 수: %d)\n", fileId, workerCount, len(distributedFileInfos))
+	fmt.Printf("[DL-Pool] 🚀 다운로드 고루틴 시작! (파일 ID: %s, 파편 수: %d)\n", fileId, len(distributedFileInfos))
 	fmt.Printf("========================================================\n")
 
 	shardDir, err := reedsolomon.GetShardDir()
 	if err != nil {
-		fmt.Printf("[DL-Pool] ❌ 임시 폴더(ShardDir) 가져오기 실패: %v\n", err)
 		return err
+	}
+
+	// Initialize local destination session once
+	fdst, err := fs.NewFs(context.Background(), shardDir)
+	if err != nil {
+		return fmt.Errorf("failed to create local destination session: %v", err)
 	}
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var errs []error
 
-	jobs := make(chan DistributedFile, len(distributedFileInfos))
+	// 1. Group shards by Remote
+	shardsByRemote := make(map[string][]DistributedFile)
+	for _, shard := range distributedFileInfos {
+		shardsByRemote[shard.Remote.String()] = append(shardsByRemote[shard.Remote.String()], shard)
+	}
 
-	downloader := func() {
-
-		defer func() {
-			wg.Done()
-		}()
-
-		for fileInfo := range jobs {
-
-			// 실제 다운로드 함수 호출
-			err := downloadFile(fileInfo, shardDir, fileId, &mu, &errs, driveIdMap, folderIdMap)
-
-			if err != nil {
-				mu.Lock()
-				errs = append(errs, fmt.Errorf("failed to download shard from %s: %v", fileInfo.Remote.Name, err))
-				mu.Unlock()
-			}
+	// 2. Start one goroutine per Remote Provider
+	for remoteIdentity, shardList := range shardsByRemote {
+		fsrc, ok := sessions[remoteIdentity]
+		if !ok {
+			fmt.Printf("[DL-Pool] ⚠️ Session not found for %s, skipping.\n", remoteIdentity)
+			continue
 		}
-	}
 
-	// Start worker goroutines
-	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		go downloader()
+		go func(identity string, list []DistributedFile, remoteFs fs.Fs) {
+			defer wg.Done()
+			fmt.Printf("[DL-Pool] Starting batch download for remote: %s (%d shards)\n", identity, len(list))
+
+			for _, fileInfo := range list {
+				err := downloadFile(fileInfo, fdst, remoteFs, fileId, &mu, &errs)
+				if err != nil {
+					mu.Lock()
+					errs = append(errs, fmt.Errorf("failed shard on %s: %v", identity, err))
+					mu.Unlock()
+				}
+			}
+			fmt.Printf("[DL-Pool] Completed batch download for remote: %s\n", identity)
+		}(remoteIdentity, shardList, fsrc)
 	}
 
-	// Send jobs to workers
-	for _, fileInfo := range distributedFileInfos {
-		jobs <- fileInfo
-	}
-	close(jobs) // Close channel to signal workers
-
-	wg.Wait() // Wait for all workers to finish
+	wg.Wait()
 
 	if len(errs) > 0 {
-		return fmt.Errorf("download completed with %d errors. First error: %w", len(errs), errs[0])
+		return fmt.Errorf("download completed with %d errors", len(errs))
 	}
 
 	return nil
@@ -225,70 +272,41 @@ func startDownloadFileGoroutine(distributedFileInfos []DistributedFile, fileId s
 	return nil
 }
 
-func downloadFile(fileInfo DistributedFile, shardDir, fileId string, mu *sync.Mutex, errs *[]error, driveIdMap map[string]string, folderIdMap map[string]string) error {
+func downloadFile(fileInfo DistributedFile, fdst fs.Fs, fsrc fs.Fs, fileId string, mu *sync.Mutex, errs *[]error) error {
 	startTime := time.Now()
 
-	fmt.Printf("fileInfo.DistributedFile: %s\n", fileInfo.DistributedFile)
 	hashedFileName, err := CalculateHash(fileInfo.DistributedFile)
 	if err != nil {
-		mu.Lock()
-		*errs = append(*errs, fmt.Errorf("CalculateHash for %s: %w", fileInfo.DistributedFile, err))
-		mu.Unlock()
 		return err
 	}
 
-	var source string
+	fmt.Printf("🚀 [Download] Shard: %s from %s\n", hashedFileName, fileInfo.Remote.Name)
 
-	targetDriveId, hasSharedDriveId := driveIdMap[fileInfo.Remote.Name]
-	targetFolderId, hasFolderId := folderIdMap[fileInfo.Remote.Name]
-	fmt.Printf("folderIdMap: %v\n", folderIdMap)
-
-	switch {
-	case hasSharedDriveId && fileInfo.Remote.Type == "onedrive":
-		// 공유 OneDrive: sharing.json의 drive_id + root_folder_id로 폴더 루트 오버라이드
-		actualDriveId := targetDriveId
-		if strings.Contains(targetFolderId, "!") {
-			actualDriveId = strings.Split(targetFolderId, "!")[0]
-		}
-		source = fmt.Sprintf("%s,drive_id=%s,root_folder_id=%s:",
-			fileInfo.Remote.Name, actualDriveId, targetFolderId)
-	case hasFolderId && fileInfo.Remote.Type == "drive":
-		// 공유 Google Drive: sharing.json의 root_folder_id로 폴더 루트 오버라이드
-		source = fmt.Sprintf("%s,root_folder_id=%s:",
-			fileInfo.Remote.Name, targetFolderId)
-	default:
-		// 일반 다운로드(datamap.json) 및 공유 Dropbox:
-		// 업로드 시 저장 경로 Distribution/{fileId}/{hashedFileName} 그대로 사용
-		source = fmt.Sprintf("%s:%s/%s/%s",
-			fileInfo.Remote.Name, remoteDirectory, fileId, hashedFileName)
-	}
-
-	fmt.Printf("Downloading shard %s to %s\n", source, shardDir)
-	downloadedFilePath := path.Join(shardDir, hashedFileName)
-	fmt.Printf("downloadedFilePath: %s\n", downloadedFilePath)
-
-	if err := remoteCallCopyforDown([]string{source, shardDir}); err != nil {
-		mu.Lock()
-		*errs = append(*errs, fmt.Errorf("remoteCallCopyforDown for %s: %w", fileInfo.DistributedFile, err))
-		mu.Unlock()
-		return err
+	// Since fsrc might be the base directory or the file itself due to initDownloadSessions logic
+	// we handle the source file name
+	srcFileName := hashedFileName
+	
+	// If the shard used a special share-root connection string, the hashedFileName might not be 
+	// relative to fsrc in the same way. But based on current logic, shards are in Distribution/fileId/
+	// and initDownloadSessions points there for the 'default' case.
+	// For shared drives, it points to the share root.
+	
+	err = operations.CopyFile(context.Background(), fdst, fsrc, srcFileName, srcFileName)
+	if err != nil {
+		return fmt.Errorf("CopyFile error: %w", err)
 	}
 
 	elapsedTime := time.Since(startTime)
-	downloadedFile, err := os.Stat(downloadedFilePath)
-	if err != nil {
-		mu.Lock()
-		*errs = append(*errs, fmt.Errorf("downloaded file %s does not exist", downloadedFilePath))
-		mu.Unlock()
-		return err
-	}
-
 	// Calculate throughput
-	throughput := float64(downloadedFile.Size()) / elapsedTime.Seconds()
+	shardSize := int64(0)
+	if obj, err := fsrc.NewObject(context.Background(), srcFileName); err == nil {
+		shardSize = obj.Size()
+	}
+	throughput := float64(shardSize) / elapsedTime.Seconds()
 	throughputKbps := throughput * 8 / 1e3
 
 	if err := ConvertFileNameForDo(hashedFileName, fileInfo.DistributedFile); err != nil {
-		return fmt.Errorf("ConvertFileNameForDo for %s: %w", fileInfo.DistributedFile, err)
+		return fmt.Errorf("ConvertFileNameForDo failed: %v", err)
 	}
 
 	// Update remote info
