@@ -39,28 +39,8 @@ func (lb LoadBalancerType) IsValid() bool {
 	}
 }
 
-func testgetUpstreamRemotestest() []config.Remote {
-	remotes := config.GetRemotes()
-	Upstreams := []string{
-		"youngrhee:",
-		"youngrhee2:",
-	}
-
-	seen := make(map[string]struct{})
-	for _, upstream := range Upstreams {
-		_, configName, _, _, _ := fs.ParseRemote(upstream)
-		//name := strings.TrimSuffix(fsName, ":")
-		seen[configName] = struct{}{}
-	}
-
-	var result []config.Remote
-	for _, remote := range remotes {
-		if _, ok := seen[remote.Name]; ok {
-			result = append(result, remote)
-		}
-	}
-
-	return result
+func getAvailableRemotes() []config.Remote {
+	return config.GetRemotes()
 }
 
 func LoadBalancer_UNIC(remotes []config.Remote) (Remote, error) {
@@ -92,7 +72,7 @@ func LoadBalancer_RoundRobin() (Remote, error) {
 	}
 
 	//remotes := config.GetRemotes()
-	remotes := testgetUpstreamRemotestest()
+	remotes := getAvailableRemotes()
 	if len(remotes) == 0 {
 		return Remote{}, fmt.Errorf("no available remotes")
 	}

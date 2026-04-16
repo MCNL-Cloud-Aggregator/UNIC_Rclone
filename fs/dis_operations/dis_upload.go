@@ -327,33 +327,35 @@ func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string
 		if err := shard.AllocateRemote(loadBalancer); err != nil {
 			return fmt.Errorf("AllocateRemote error: %v", err)
 		}
-		shardsByRemote[shard.Remote.Name] = append(shardsByRemote[shard.Remote.Name], shard)
+		shardsByRemote[shard.Remote.String()] = append(shardsByRemote[shard.Remote.String()], shard)
 	}
 
 	var completedShards []DistributedFile
 
 	// 2. Start one dedicated goroutine per Remote Provider
-	for remoteName, shards := range shardsByRemote {
-		fdst, ok := sessions[remoteName]
+	for remoteIdentity, shards := range shardsByRemote {
+		fdst, ok := sessions[remoteIdentity]
 		if !ok {
-			// If session doesn't exist for some reason, create it on the fly (though it should exist from MakeDistributionDir)
+			// remoteIdentity is "Name|Type", split to get Name
+			remoteName := strings.Split(remoteIdentity, "|")[0]
+			// If session doesn't exist for some reason, create it on the fly
 			arg := fmt.Sprintf("%s:%s/%s", remoteName, remoteDirectory, fileId)
 			fdst = cmd.NewFsDir([]string{arg})
 		}
 
 		wg.Add(1)
-		go func(name string, shardList []DistributedFile, remoteFs fs.Fs) {
+		go func(identity string, shardList []DistributedFile, remoteFs fs.Fs) {
 			defer wg.Done()
-			fmt.Printf("[UNIC] Starting batch upload for provider: %s (%d shards)\n", name, len(shardList))
+			fmt.Printf("[UNIC] Starting batch upload for remote: %s (%d shards)\n", identity, len(shardList))
 
 			for _, shardInfo := range shardList {
 				shardFileName := hashedFileNameMap[shardInfo.DistributedFile]
 
-				// Upload file (Sequential within this provider's goroutine)
+				// Upload file (Sequential within this remote's goroutine)
 				err := uploadFile(fsrc, remoteFs, shardFileName, &mu, &totalThroughput, &fileCount, &errs, fileId, shardInfo, hashedFileNameMap)
 				if err != nil {
 					mu.Lock()
-					errs = append(errs, fmt.Errorf("[%s] upload error: %v", name, err))
+					errs = append(errs, fmt.Errorf("upload failed for %s on %s: %w", shardFileName, identity, err))
 					mu.Unlock()
 					continue // Try next shard anyway
 				}
@@ -363,8 +365,8 @@ func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string
 				completedShards = append(completedShards, shardInfo)
 				mu.Unlock()
 			}
-			fmt.Printf("[UNIC] Completed batch upload for provider: %s\n", name)
-		}(remoteName, shards, fdst)
+			fmt.Printf("[UNIC] Completed batch upload for remote: %s\n", identity)
+		}(remoteIdentity, shards, fdst)
 	}
 
 	wg.Wait() // Wait for all provider goroutines to finish
