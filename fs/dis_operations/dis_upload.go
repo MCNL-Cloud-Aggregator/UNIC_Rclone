@@ -1,8 +1,10 @@
 package dis_operations
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,6 +181,26 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 	}
 
 	fmt.Println("Completed Dis_Upload!")
+
+	// Notify Electron Local Server to upload the config
+	electronLocalServerURL := "http://localhost:9090/notify-upload"
+	jsonData := []byte(fmt.Sprintf(`{"action": "upload_config", "fileId": "%s"}`, fileId))
+
+	client := http.Client{
+		Timeout: 2 * time.Second,
+	}
+
+	resp, postErr := client.Post(electronLocalServerURL, "application/json", bytes.NewBuffer(jsonData))
+	if postErr != nil {
+		fmt.Printf("[UNIC] Error notifying Electron client (App might be closed): %v\n", postErr)
+	} else {
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			fmt.Println("[UNIC] Successfully notified Electron client to upload config.")
+		} else {
+			fmt.Printf("[UNIC] Warning: Electron client returned abnormal status code: %d\n", resp.StatusCode)
+		}
+	}
 
 	return nil
 }
