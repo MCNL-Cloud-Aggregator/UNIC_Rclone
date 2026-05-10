@@ -268,7 +268,7 @@ func prepareUpload(absolutePath string, backendRemote string, fileId string, tar
 	return hashNameMap, distributedFileInfos, sessions, nil
 }
 
-func uploadFile(fsrc, fdst fs.Fs, shardFileName string, mu *sync.Mutex, totalThroughput *float64, fileCount *int, errs *[]error, fileId string, shardInfo DistributedFile, hashedFileNameMap map[string]string) error {
+func uploadFile(fsrc, fdst fs.Fs, shardFileName string, mu *sync.Mutex, totalThroughput *float64, fileCount *int, errs *[]error, fileId string, shardInfo DistributedFile, hashedFileNameMap map[string]string, totalShards int) error {
 	// Get file info for throughput calculation
 	source := filepath.Join(GetShardPath(), shardFileName)
 	fileInfo, err := os.Stat(source)
@@ -300,7 +300,15 @@ func uploadFile(fsrc, fdst fs.Fs, shardFileName string, mu *sync.Mutex, totalThr
 	mu.Lock()
 	*totalThroughput += throughputKbps
 	*fileCount++
+	currentFileCount := *fileCount
 	mu.Unlock()
+
+	// Notify Progress to Electron App
+	go func(current int, total int, speed float64, remote string) {
+		client := http.Client{Timeout: 2 * time.Second}
+		payload := fmt.Sprintf(`{"action": "progress", "type": "upload", "fileId": "%s", "completedShards": %d, "totalShards": %d, "throughputKbps": %.2f, "remoteName": "%s"}`, fileId, current, total, speed, remote)
+		client.Post("http://localhost:9090/notify-upload", "application/json", bytes.NewBuffer([]byte(payload)))
+	}(currentFileCount, totalShards, throughputKbps, shardInfo.Remote.String())
 
 	// Update remote info
 	err = updateRemoteInfo_Up(fileId, shardInfo, throughputKbps, mu)
@@ -375,7 +383,7 @@ func startUploadFileGoroutine_Worker(fileId string, hashedFileNameMap map[string
 				shardFileName := hashedFileNameMap[shardInfo.DistributedFile]
 
 				// Upload file (Sequential within this remote's goroutine)
-				err := uploadFile(fsrc, remoteFs, shardFileName, &mu, &totalThroughput, &fileCount, &errs, fileId, shardInfo, hashedFileNameMap)
+				err := uploadFile(fsrc, remoteFs, shardFileName, &mu, &totalThroughput, &fileCount, &errs, fileId, shardInfo, hashedFileNameMap, len(distributedFileArray))
 				if err != nil {
 					mu.Lock()
 					errs = append(errs, fmt.Errorf("upload failed for %s on %s: %w", shardFileName, identity, err))
