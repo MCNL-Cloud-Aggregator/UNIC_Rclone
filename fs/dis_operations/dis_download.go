@@ -1,8 +1,10 @@
 package dis_operations
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -202,6 +204,8 @@ func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, f
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var errs []error
+	var fileCount int
+	totalShards := len(distributedFileInfos)
 
 	// 1. Group shards by Remote
 	shardsByRemote := make(map[string][]DistributedFile)
@@ -223,7 +227,7 @@ func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, f
 			fmt.Printf("[DL-Pool] Starting batch download for remote: %s (%d shards)\n", identity, len(list))
 
 			for _, fileInfo := range list {
-				err := downloadFile(fileInfo, fdst, remoteFs, fileId, &mu, &errs)
+				err := downloadFile(fileInfo, fdst, remoteFs, fileId, &mu, &errs, &fileCount, totalShards)
 				if err != nil {
 					mu.Lock()
 					errs = append(errs, fmt.Errorf("failed shard on %s: %v", identity, err))
@@ -245,7 +249,7 @@ func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, f
 
 // Legacy function startDownloadFileGoroutine removed as it was replaced by startDownloadFileGoroutine_Worker
 
-func downloadFile(fileInfo DistributedFile, fdst fs.Fs, fsrc fs.Fs, fileId string, mu *sync.Mutex, errs *[]error) error {
+func downloadFile(fileInfo DistributedFile, fdst fs.Fs, fsrc fs.Fs, fileId string, mu *sync.Mutex, errs *[]error, fileCount *int, totalShards int) error {
 	startTime := time.Now()
 
 	hashedFileName, err := CalculateHash(fileInfo.DistributedFile)
@@ -287,6 +291,18 @@ func downloadFile(fileInfo DistributedFile, fdst fs.Fs, fsrc fs.Fs, fileId strin
 	if err != nil {
 		return err
 	}
+
+	mu.Lock()
+	*fileCount++
+	currentFileCount := *fileCount
+	mu.Unlock()
+
+	// Notify Progress to Electron App
+	go func(current int, total int, speed float64, remote string) {
+		client := http.Client{Timeout: 2 * time.Second}
+		payload := fmt.Sprintf(`{"action": "progress", "type": "download", "fileId": "%s", "completedShards": %d, "totalShards": %d, "throughputKbps": %.2f, "remoteName": "%s"}`, fileId, current, total, speed, remote)
+		client.Post("http://localhost:9090/notify-upload", "application/json", bytes.NewBuffer([]byte(payload)))
+	}(currentFileCount, totalShards, throughputKbps, fileInfo.Remote.String())
 
 	return nil
 }
