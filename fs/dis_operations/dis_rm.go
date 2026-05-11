@@ -72,7 +72,10 @@ func remoteCallDeleteFile(args []string) (err error) {
 	remotePath := args[1]
 	f, fileName := cmd.NewFsFile(remotePath)
 	if fileName == "" {
-		return fmt.Errorf("invalid file path: %s", remotePath)
+		// 파일이 디렉토리로 인식되거나 이미 존재하지 않아 fileName이 빈 문자열인 경우
+		// 이미 지워진 것으로 간주하고 성공(nil)을 반환합니다.
+		fmt.Printf("remoteCallDeleteFile: %s is already deleted or invalid path (fileName empty)\n", remotePath)
+		return nil
 	}
 
 	// 2. 해당 백엔드에서 Object(파일 객체)를 찾음
@@ -88,7 +91,11 @@ func remoteCallDeleteFile(args []string) (err error) {
 	// 3. operations.DeleteFile을 사용하여 삭제 실행
 	// 이 함수는 내부적으로 각 클라우드의 Remove()를 호출하며,
 	// 휴지통 사용 여부 등은 rclone.conf 설정이나 전역 설정을 따릅니다.
-	return operations.DeleteFile(context.Background(), obj)
+	err = operations.DeleteFile(context.Background(), obj)
+	if err == fs.ErrorObjectNotFound {
+		return nil
+	}
+	return err
 }
 
 func startRmFileGoroutine(fileId string, distributedFileArray []DistributedFile) (err error) {

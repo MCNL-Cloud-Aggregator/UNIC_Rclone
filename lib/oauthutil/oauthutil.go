@@ -891,10 +891,27 @@ func configExchange(ctx context.Context, name string, m configmap.Mapper, oauthC
 	// Create the configuration required for the OAuth flow
 	oauth2Conf := oauthConfig.MakeOauth2Config()
 
+	fmt.Printf("\n[UNIC Debug] OAUTH EXCHANGE START\n")
+	fmt.Printf("   Client ID   : %s\n", oauth2Conf.ClientID)
+	fmt.Printf("   Token URL   : %s\n", oauth2Conf.Endpoint.TokenURL)
+	fmt.Printf("   Redirect URL: %s\n", oauth2Conf.RedirectURL)
+	fmt.Printf("   Auth Code   : %s\n", code)
+
 	token, err := oauth2Conf.Exchange(ctx, code)
 	if err != nil {
+		var retrieveErr *oauth2.RetrieveError
+		if errors.As(err, &retrieveErr) {
+			fmt.Printf("[UNIC Debug] OAUTH ERROR RESPONSE: %s\n", string(retrieveErr.Body))
+			return fmt.Errorf("failed to get token: %w\nResponse: %s", err, string(retrieveErr.Body))
+		}
+		fmt.Printf("[UNIC Debug] GENERAL OAUTH ERROR: %v\n", err)
 		return fmt.Errorf("failed to get token: %w", err)
 	}
+
+	if token != nil {
+		fmt.Printf("[UNIC Debug] OAUTH EXCHANGE SUCCESS!\n")
+	}
+
 	return PutToken(name, m, token, true)
 }
 
