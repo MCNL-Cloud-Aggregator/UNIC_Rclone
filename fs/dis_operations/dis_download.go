@@ -161,24 +161,37 @@ func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, f
 		targetDriveId, hasSharedDriveId := driveIdMap[remoteName]
 		targetFolderId, hasFolderId := folderIdMap[remoteName]
 
-		var connString string
+		defaultConnString := fmt.Sprintf("%s:%s/%s", remoteName, remoteDirectory, fileId)
+		connStrings := []string{}
+
 		switch {
 		case hasSharedDriveId && remoteType == "onedrive":
 			actualDriveId := targetDriveId
 			if strings.Contains(targetFolderId, "!") {
 				actualDriveId = strings.Split(targetFolderId, "!")[0]
 			}
-			connString = fmt.Sprintf("%s,drive_id=%s,root_folder_id=%s:", remoteName, actualDriveId, targetFolderId)
+			connStrings = append(connStrings, fmt.Sprintf("%s,drive_id=%s,root_folder_id=%s:", remoteName, actualDriveId, targetFolderId))
 		case hasFolderId && remoteType == "drive":
-			connString = fmt.Sprintf("%s,root_folder_id=%s:", remoteName, targetFolderId)
-		default:
-			connString = fmt.Sprintf("%s:%s/%s", remoteName, remoteDirectory, fileId)
+			connStrings = append(connStrings, fmt.Sprintf("%s,root_folder_id=%s:", remoteName, targetFolderId))
+		case hasFolderId && remoteType == "dropbox":
+			connStrings = append(connStrings, fmt.Sprintf("%s,root_namespace=%s:", remoteName, targetFolderId))
 		}
+		connStrings = append(connStrings, defaultConnString)
 
-		fsrc, err := fs.NewFs(context.Background(), connString)
-		// fs.ErrorIsFile can happen if the path is interpreted as a file, but we want the parent FS for copying.
-		if err != nil && err != fs.ErrorIsFile {
-			return nil, fmt.Errorf("failed to create session for %s: %w", id, err)
+		var fsrc fs.Fs
+		var lastErr error
+		for _, connString := range connStrings {
+			var err error
+			fsrc, err = fs.NewFs(context.Background(), connString)
+			// fs.ErrorIsFile can happen if the path is interpreted as a file, but we want the parent FS for copying.
+			if err == nil || err == fs.ErrorIsFile {
+				lastErr = nil
+				break
+			}
+			lastErr = err
+		}
+		if lastErr != nil {
+			return nil, fmt.Errorf("failed to create session for %s using %s: %w", id, strings.Join(connStrings, ", "), lastErr)
 		}
 		sessions[id] = fsrc
 	}
