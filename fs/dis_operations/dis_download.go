@@ -311,6 +311,11 @@ func downloadFile(fileInfo DistributedFile, fdst fs.Fs, fsrc fs.Fs, connString s
 		if fallbackErr := copyShardWithRcloneCommand(connString, shardDir, srcFileName); fallbackErr != nil {
 			return fmt.Errorf("CopyFile error: %w; fallback copy error: %v", err, fallbackErr)
 		}
+	} else if _, statErr := os.Stat(filepath.Join(shardDir, srcFileName)); statErr != nil {
+		fmt.Printf("[Download] CopyFile returned success but %s is missing, falling back to rclone copy --include: %v\n", srcFileName, statErr)
+		if fallbackErr := copyShardWithRcloneCommand(connString, shardDir, srcFileName); fallbackErr != nil {
+			return fmt.Errorf("CopyFile produced no local file: %v; fallback copy error: %v", statErr, fallbackErr)
+		}
 	}
 
 	elapsedTime := time.Since(startTime)
