@@ -274,12 +274,15 @@ func copyShardWithRcloneCommand(connString, shardDir, shardName string) error {
 	if connString == "" {
 		return fmt.Errorf("empty source connection string")
 	}
-	cmd := exec.Command(os.Args[0], "copy", connString, shardDir, "--include", shardName)
+	cmd := exec.Command(os.Args[0], "copy", connString, shardDir, "--include", shardName, "--error-on-no-transfer")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("rclone copy fallback failed: %w: %s", err, strings.TrimSpace(out.String()))
+	}
+	if _, err := os.Stat(filepath.Join(shardDir, shardName)); err != nil {
+		return fmt.Errorf("rclone copy fallback completed but shard was not created: %w: %s", err, strings.TrimSpace(out.String()))
 	}
 	return nil
 }
