@@ -614,6 +614,30 @@ func updateRemote(ctx context.Context, name string, keyValues rc.Params, opt Upd
 	if err != nil {
 		return nil, err
 	}
+
+	tokenStr, found := FileGetValue(name, "token")
+	if found && tokenStr != "" {
+		var email string
+		maxRetries := 3
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			email = fetchEmailFromCloudAPI(fsType, tokenStr)
+			if email != "" {
+				break
+			}
+			fmt.Printf("[UNIC Warning] Failed to fetch email for '%s', retrying... (%d/%d)\n", name, attempt, maxRetries)
+			if attempt < maxRetries {
+				time.Sleep(2 * time.Second)
+			}
+		}
+
+		if email != "" {
+			FileSetValue(name, "email", email)
+			fmt.Printf("[UNIC] Successfully added email '%s' to remote '%s'\n", email, name)
+		} else {
+			fmt.Printf("[UNIC Error] Could not fetch email for remote '%s' after %d attempts\n", name, maxRetries)
+		}
+	}
+
 	SaveConfig()
 	cache.ClearConfig(name) // remove any remotes based on this config from the cache
 	return out, nil
@@ -644,19 +668,6 @@ func CreateRemote(ctx context.Context, name string, Type string, keyValues rc.Pa
 	out, err = UpdateRemote(ctx, name, keyValues, opts)
 	if err != nil {
 		return out, err
-	}
-
-	tokenStr, found := FileGetValue(name, "token")
-
-	if found && tokenStr != "" {
-		email := fetchEmailFromCloudAPI(Type, tokenStr)
-
-		if email != "" {
-			FileSetValue(name, "email", email)
-			SaveConfig()
-
-			fmt.Printf("[UNIC] Successfully added email '%s' to remote '%s'\n", email, name)
-		}
 	}
 	return out, nil
 }
