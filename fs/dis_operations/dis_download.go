@@ -80,7 +80,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 	fmt.Printf("---initDownloadSessions end---\n")
 
 	fmt.Printf("---startDownloadFileGoroutine_Worker start---\n")
-	if err := startDownloadFileGoroutine_Worker(distributedFileInfos, fileId, sessions); err != nil {
+	if err := startDownloadFileGoroutine_Worker(distributedFileInfos, fileId, sessions, fileInfoForDriveId.Shard, fileInfoForDriveId.Parity); err != nil {
 		return err
 	}
 	fmt.Printf("---startDownloadFileGoroutine_Worker end---\n")
@@ -206,7 +206,7 @@ func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, f
 	return sessions, nil
 }
 
-func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, fileId string, sessions map[string]downloadSession) (err error) {
+func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, fileId string, sessions map[string]downloadSession, requiredShards int, parityShards int) (err error) {
 	fmt.Printf("\n========================================================\n")
 	fmt.Printf("[DL-Pool] 🚀 다운로드 고루틴 시작! (파일 ID: %s, 파편 수: %d)\n", fileId, len(distributedFileInfos))
 	fmt.Printf("========================================================\n")
@@ -264,7 +264,11 @@ func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, f
 	wg.Wait()
 
 	if len(errs) > 0 {
-		return fmt.Errorf("download completed with %d errors", len(errs))
+		successfulShards := totalShards - len(errs)
+		if successfulShards < requiredShards {
+			return fmt.Errorf("download completed with %d errors; only %d/%d shards available, need at least %d data shards", len(errs), successfulShards, totalShards, requiredShards)
+		}
+		fmt.Printf("[DL-Pool] ⚠️ %d shard(s) failed, but %d/%d shards are available (required: %d, parity: %d). Continuing with Reed-Solomon reconstruction.\n", len(errs), successfulShards, totalShards, requiredShards, parityShards)
 	}
 
 	return nil
