@@ -229,7 +229,9 @@ func (vol *Volume) remove(ctx context.Context) error {
 
 	if vol.persist {
 		// Remote remote from config file
-		config.DeleteRemote(vol.Name)
+		if err := config.DeleteRemote(vol.Name); err != nil {
+			return err
+		}
 	}
 	return nil
 }

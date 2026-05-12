@@ -221,7 +221,9 @@ func rcDelete(ctx context.Context, in rc.Params) (out rc.Params, err error) {
 	if err != nil {
 		return nil, err
 	}
-	DeleteRemote(name)
+	if err = DeleteRemote(name); err != nil {
+		return nil, err
+	}
 	return nil, nil
 }
 

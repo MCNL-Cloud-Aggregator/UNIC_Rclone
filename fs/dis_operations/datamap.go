@@ -267,27 +267,26 @@ func calculateRemovableClouds(shard int, parity int, totalClouds int) int {
 		return 0
 	}
 
-	fmt.Printf("1: %d, %d %d\n", shard, parity, totalClouds)
-
 	totalShards := shard + parity
 	// 1. (shard 수 / 전체 클라우드 수) -> 소수점 올림
 	// Shards per cloud (Load)
 	shardsPerCloud := math.Ceil(float64(totalShards) / float64(totalClouds))
 
-	fmt.Printf("2: %d\n", shardsPerCloud)
 	if shardsPerCloud == 0 {
 		return 0
 	}
-
 	// 2. (parity 수) / 위 결과 -> 소수점 내림
 	removable := math.Floor(float64(parity) / shardsPerCloud)
-	fmt.Printf("removable: %d\n", int(removable))
 	return int(removable)
 }
 
 // DeleteDatamap: 리모트(클라우드) 삭제 시, 해당 리모트에 저장된 파편들을 확인하고
-// 데이터 복구가 필요한 파일(Unsafe)은 다운로드 후 다른 리모트에 재업로드하며,
+// 데이터 복구가 필요한 파일(Unsafe)이 하나라도 있으면 삭제를 차단하여 사용자에게 안내하고,
 // 복구가 필요 없는 파일(Safe)은 메타데이터(데이터맵)만 업데이트하는 함수입니다.
+//
+// Unsafe 판정 기준: 해당 리모트를 제거했을 때 Reed-Solomon 복구 여유분(removable)이 0 이하인 파일.
+// 이 경우 함수는 에러를 반환하며, 사용자는 unsafe 파일들을 먼저 다운로드/삭제한 뒤
+// remote 삭제를 다시 시도해야 합니다.
 func DeleteDatamap(remoteName string) error {
 	// RCD(Remote Control Daemon) 서버 모드에서 표준 입력(stdin) 프롬프트가 뜨면
 	// 프로세스가 멈추는 것을 방지하기 위해 자동 확인(AutoConfirm) 플래그를 활성화합니다.
@@ -303,8 +302,7 @@ func DeleteDatamap(remoteName string) error {
 	}
 
 	// 2. 파일 처리 대상 분류
-	// 삭제될 리모트로 인해 파일이 손상될 위험이 있는 파일(unsafe)과
-	// 여전히 복구 가능한 상태인 파일(safe)을 담을 배열을 선언합니다.
+	// 삭제될 리모트로 인해 복구 불가능해지는 파일(unsafe)과 복구 가능한 파일(safe)을 담을 배열입니다.
 	var unsafeFiles []string
 	var safeFiles []string
 
@@ -315,128 +313,57 @@ func DeleteDatamap(remoteName string) error {
 		for _, shard := range fileInfo.DistributedFileInfos {
 			// 파편이 저장된 리모트 이름이 삭제하려는 리모트 이름과 같은지 확인
 			if shard.Remote.Name == remoteName {
-				fmt.Printf("여기 remote: %s\n", remoteName)
 				usesRemote = true // 삭제하려는 리모트를 사용 중임을 표시
 				break
 			}
 		}
-		
+
 		// 삭제하려는 리모트에 파편이 없다면, 이 파일은 영향을 받지 않으므로 다음 파일로 넘어갑니다.
 		if !usesRemote {
 			continue
 		}
-		
-		fmt.Printf("calculate 시작, %d %d %d\n", fileInfo.Shard, fileInfo.Parity, len(fileInfo.RemoteList))
 		// 현재 활성화된 리모트 개수에서 하나(삭제될 리모트)를 뺐을 때,
 		// 남은 리모트들만으로 Reed-Solomon 복구가 가능한지 계산합니다.
 		removable := calculateRemovableClouds(fileInfo.Shard, fileInfo.Parity, len(fileInfo.RemoteList))
-		fmt.Printf("removable 값 %d", removable)
-		
-		if removable >= 1 {
+
+		if removable == 0 {
+			// removable이 0이면 복구 불가능 → unsafe 배열에 수집 (루프 종료 후 한번에 차단)
+			unsafeFiles = append(unsafeFiles, fileId)
+		} else {
 			// 여유분(removable)이 1 이상이면 이 리모트가 삭제되어도 파일 복구가 가능하므로 safe 배열에 추가
 			safeFiles = append(safeFiles, fileId)
-		} else {
-			// 여유분이 부족하여 파일이 손상될 위험이 있으므로 재업로드가 필요한 unsafe 배열에 추가
-			unsafeFiles = append(unsafeFiles, fileId)
 		}
 	}
 
 	fmt.Printf("[DeleteRemote] Analyzing Remote '%s'...\n", remoteName)
 	fmt.Printf(" - Metadata Update Only (Safe): %d files\n", len(safeFiles))
-	fmt.Printf(" - Full Migration Needed (Unsafe): %d files\n", len(unsafeFiles))
+	fmt.Printf(" - Needs Download Before Deletion (Unsafe): %d files\n", len(unsafeFiles))
 
 	// ---------------------------------------------------------
-	// [Step 1] Unsafe Files 처리 (다운로드 -> 삭제 -> 재업로드)
+	// [Step 1] Unsafe Files 검사: 있으면 전체 목록을 담은 에러 메시지로 차단
 	// ---------------------------------------------------------
 	if len(unsafeFiles) > 0 {
-		// 파일을 임시로 다운로드하여 복구해둘 시스템의 임시 디렉토리 경로 생성
-		tempDir := filepath.Join(os.TempDir(), "unic_migration")
-		// 임시 디렉토리가 없으면 생성 (권한 0755)
-		if err := os.MkdirAll(tempDir, 0755); err != nil {
-			return fmt.Errorf("failed to create temp dir: %w", err)
-		}
-
-		// 재업로드가 필요한 파일들을 순회하며 마이그레이션 진행
-		for _, fileId := range unsafeFiles {
-			fileInfo, exists := filesMap[fileId]
-			if !exists {
-				fmt.Printf("   [Warning] File info not found for %s. Skipping.\n", fileId)
-				continue
-			}
-
-			fmt.Printf("[Migration] Processing unsafe file: %s (Path: %s)\n", fileId, fileInfo.FilePath)
-
-			// 1. 다운로드 (복구)
-			// 삭제 예정인 리모트를 포함하여 기존 파편들을 모아 원본 파일로 복구(다운로드)합니다.
-			fmt.Printf("인자값: %s %s %s\n", fileId, tempDir, fileInfo.FilePath)
-			// Dis_Download는 ID, 임시저장폴더, 원격경로를 배열로 받음
-			if err := Dis_Download([]string{fileId, tempDir, fileInfo.FilePath}, false); err != nil {
-				fmt.Printf("   [Error] Download failed for %s. Skipping migration: %v\n", fileId, err)
-				continue // 다운로드 실패 시 해당 파일의 마이그레이션 건너뜀
-			}
-
-			// 2. 메타데이터 및 클라우드 파편 삭제
-			// 복구된 원본이 생겼으므로, 기존 파편들과 메타데이터를 클라우드에서 삭제합니다.
-			if err := Dis_rm([]string{fileId}, false); err != nil {
-				return fmt.Errorf("failed Dis_rm for %s: %w", fileId, err)
-			}
-
-			// ---------------------------------------------------------
-			// 3. ★ 재업로드 수행 (새로운 리모트 구성으로 업로드) ★
-			// ---------------------------------------------------------
-			// 임시 디렉토리에 복구된 원본 파일의 로컬 경로
-			localTempFilePath := filepath.Join(tempDir, fileInfo.FileName)
-			remotePath := fileInfo.FilePath // 원격 저장소 상의 경로
-
-			fmt.Printf("🔍 추출 작업: '%s' 파일의 RemotePool에서 대상 클라우드를 찾습니다...\n", fileInfo.FileName)
-
-			// 재업로드할 때 사용할 클라우드(리모트) 목록을 구합니다.
-			var validRemotes []config.Remote
-			seenRemotes := make(map[string]bool) // 중복 추가 방지용 맵
-
-			// 기존 파일의 파편 정보(DistributedFileInfos)에 기록된 RemotePool을 순회
-			for _, dFile := range fileInfo.DistributedFileInfos {
-				for _, r := range dFile.RemotePool {
-					// 삭제될 리모트가 아니고, 아직 validRemotes 배열에 안 들어간 리모트만 추가합니다.
-					if r.Name != remoteName && !seenRemotes[r.Name] {
-						validRemotes = append(validRemotes, r)
-						seenRemotes[r.Name] = true
-					}
-				}
-			}
-
-			fmt.Printf("🎯 재업로드 대상 클라우드 확정: %d개\n", len(validRemotes))
-			for i, r := range validRemotes {
-				fmt.Printf("   - Target %d: %s\n", i+1, r.Name)
-			}
-
-			// 재업로드를 위한 타겟 정보를 생성합니다. (UseConfig: false = 설정파일 대신 제공된 배열 사용)
-			newTargets := UploadTargets{
-				Remotes:   validRemotes,
-				UseConfig: false,
-			}
-
-			fmt.Printf("[3. Upload] Starting Dis_Upload for %s to %d targets...\n", fileId, len(validRemotes))
-
-			// 남은 리모트들을 대상으로 파일을 분산 저장(업로드)합니다.
-			err := Dis_Upload(
-				[]string{localTempFilePath, remotePath, fileId},
-				newTargets,
-				false,
-				RoundRobinFromSelectedRemotes,
-			)
-
-			// 업로드 결과 처리 및 임시 파일 삭제
-			if err != nil {
-				fmt.Printf("   ❌ [Error] Upload failed for %s: %v\n", fileId, err)
+		unsafeFileNames := make([]string, 0, len(unsafeFiles))
+		for _, fid := range unsafeFiles {
+			if info, exists := filesMap[fid]; exists {
+				unsafeFileNames = append(unsafeFileNames, info.FileName)
 			} else {
-				// 4. 업로드 성공 시 로컬에 저장했던 복구용 임시 파일을 삭제(Cleanup)합니다.
-				if err := os.Remove(localTempFilePath); err != nil {
-					fmt.Printf("   ⚠️ [Warning] Failed to delete temp file %s: %v\n", localTempFilePath, err)
-				}
-				fmt.Printf("   ✅ [Migration] Completed for %s\n", fileId)
+				unsafeFileNames = append(unsafeFileNames, fid)
 			}
 		}
+
+		msg := fmt.Sprintf(
+			"'%s'을 삭제하면 아래 %d개 파일이 복구 불가능한 상태가 됩니다.\n"+
+				"remote를 삭제하기 전에 해당 파일들을 먼저 다운로드하고 삭제해 주세요.\n\n"+
+				"위험 파일 목록:\n",
+			remoteName, len(unsafeFileNames),
+		)
+		for i, name := range unsafeFileNames {
+			msg += fmt.Sprintf("  %d. %s\n", i+1, name)
+		}
+		msg += "\n처리 순서: 위 파일 다운로드 -> 파일 삭제 -> remote 삭제"
+
+		return fmt.Errorf("%s", msg)
 	}
 
 	// ---------------------------------------------------------
@@ -444,15 +371,6 @@ func DeleteDatamap(remoteName string) error {
 	// ---------------------------------------------------------
 	// 복구 가능한 파일들은 재업로드 없이 메타데이터(json) 상에서 해당 리모트 정보만 제거합니다.
 	if len(safeFiles) > 0 {
-		// 앞선 Unsafe Files 처리 과정(Dis_rm, Dis_Upload)에서 filesMap이 변경되었을 수 있으므로
-		// 최신 상태의 데이터맵을 다시 읽어옵니다.
-		if len(unsafeFiles) > 0 {
-			filesMap, err = readJsonFile()
-			if err != nil {
-				return fmt.Errorf("failed to reload datamap: %w", err)
-			}
-		}
-
 		dirty := false // 데이터맵에 수정사항이 발생했는지 추적하는 플래그
 		for _, fileId := range safeFiles {
 			fileInfo, exists := filesMap[fileId]
