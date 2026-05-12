@@ -369,9 +369,9 @@ var configDeleteCommand = &cobra.Command{
 	Annotations: map[string]string{
 		"versionIntroduced": "v1.39",
 	},
-	Run: func(command *cobra.Command, args []string) {
+	RunE: func(command *cobra.Command, args []string) error {
 		cmd.CheckArgs(1, 1, command, args)
-		config.DeleteRemote(args[0])
+		return config.DeleteRemote(args[0])
 	},
 }
 

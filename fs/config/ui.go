@@ -606,13 +606,13 @@ func EditRemote(ctx context.Context, ri *fs.RegInfo, name string) error {
 var PreDeleteRemote func(name string) error
 
 // DeleteRemote gets the user to delete a remote
-func DeleteRemote(name string) {
+func DeleteRemote(name string) error {
 	if PreDeleteRemote != nil {
 		fmt.Printf("DEBUG: PreDeleteRemote called for %s\n", name) // Verification log
 		err := PreDeleteRemote(name)
 		if err != nil {
 			fmt.Printf("Error checking remote delete: %v\n", err)
-			return
+			return err
 		}
 	}
 	LoadedData().DeleteSection(name)
@@ -639,6 +639,7 @@ func DeleteRemote(name string) {
 		fmt.Printf("WARNING: 'unic' remote or 'upstreams' key not found in config.\n")
 	}
 	SaveConfig()
+	return nil
 }
 
 // copyRemote asks the user for a new remote name and copies name into
@@ -748,7 +749,9 @@ func EditConfig(ctx context.Context) (err error) {
 			newSection()
 			name := ChooseRemote()
 			newSection()
-			DeleteRemote(name)
+			if err := DeleteRemote(name); err != nil {
+				fmt.Printf("Error: %v\n", err)
+			}
 		case 'r':
 			newSection()
 			name := ChooseRemote()
