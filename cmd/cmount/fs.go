@@ -3,7 +3,6 @@
 package cmount
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path"
@@ -35,7 +34,6 @@ type FS struct {
 
 // NewFS makes a new FS
 func NewFS(VFS *vfs.VFS, opt *mountlib.Options) *FS {
-	fmt.Printf("%s     [Internal]: NewFS: start\n", time.Now().Format("15:04:05.000"))
 	fsys := &FS{
 		VFS:   VFS,
 		f:     VFS.Fs(),
@@ -47,7 +45,6 @@ func NewFS(VFS *vfs.VFS, opt *mountlib.Options) *FS {
 
 // Open a handle returning an integer file handle
 func (fsys *FS) openHandle(handle vfs.Handle) (fh uint64) {
-	fmt.Printf("%s     [Internal]: openHandle: start\n", time.Now().Format("15:04:05.000"))
 	fsys.mu.Lock()
 	defer fsys.mu.Unlock()
 	var i int
@@ -66,7 +63,6 @@ found:
 
 // get the handle for fh, call with the lock held
 func (fsys *FS) _getHandle(fh uint64) (i int, handle vfs.Handle, errc int) {
-	fmt.Printf("%s     [Internal]: _getHandle: start\n", time.Now().Format("15:04:05.000"))
 	if fh > uint64(len(fsys.handles)) {
 		fs.Debugf(nil, "Bad file handle: too big: 0x%X", fh)
 		return i, nil, -fuse.EBADF
@@ -82,7 +78,6 @@ func (fsys *FS) _getHandle(fh uint64) (i int, handle vfs.Handle, errc int) {
 
 // Get the handle for the file handle
 func (fsys *FS) getHandle(fh uint64) (handle vfs.Handle, errc int) {
-	fmt.Printf("%s     [Internal]: getHandle: start\n", time.Now().Format("15:04:05.000"))
 	fsys.mu.Lock()
 	_, handle, errc = fsys._getHandle(fh)
 	fsys.mu.Unlock()
@@ -91,7 +86,6 @@ func (fsys *FS) getHandle(fh uint64) (handle vfs.Handle, errc int) {
 
 // Close the handle
 func (fsys *FS) closeHandle(fh uint64) (errc int) {
-	fmt.Printf("%s     [Internal]: closeHandle: start\n", time.Now().Format("15:04:05.000"))
 	fsys.mu.Lock()
 	i, _, errc := fsys._getHandle(fh)
 	if errc == 0 {
@@ -103,14 +97,12 @@ func (fsys *FS) closeHandle(fh uint64) (errc int) {
 
 // lookup a Node given a path
 func (fsys *FS) lookupNode(path string) (node vfs.Node, errc int) {
-	fmt.Printf("%s     [Internal]: lookupNode: start\n", time.Now().Format("15:04:05.000"))
 	node, err := fsys.VFS.Stat(path)
 	return node, translateError(err)
 }
 
 // lookup a Dir given a path
 func (fsys *FS) lookupDir(path string) (dir *vfs.Dir, errc int) {
-	fmt.Printf("%s     [Internal]: lookupDir: start\n", time.Now().Format("15:04:05.000"))
 	node, errc := fsys.lookupNode(path)
 	if errc != 0 {
 		return nil, errc
@@ -124,7 +116,6 @@ func (fsys *FS) lookupDir(path string) (dir *vfs.Dir, errc int) {
 
 // lookup a parent Dir given a path returning the dir and the leaf
 func (fsys *FS) lookupParentDir(filePath string) (leaf string, dir *vfs.Dir, errc int) {
-	fmt.Printf("%s     [Internal]: lookupParentDir: start\n", time.Now().Format("15:04:05.000"))
 	parentDir, leaf := path.Split(filePath)
 	dir, errc = fsys.lookupDir(parentDir)
 	return leaf, dir, errc
@@ -134,7 +125,6 @@ func (fsys *FS) lookupParentDir(filePath string) (leaf string, dir *vfs.Dir, err
 //
 // handle may be nil
 func (fsys *FS) getNode(path string, fh uint64) (node vfs.Node, handle vfs.Handle, errc int) {
-	fmt.Printf("%s     [Internal]: getNode: start\n", time.Now().Format("15:04:05.000"))
 	if fh == fhUnset {
 		node, errc = fsys.lookupNode(path)
 	} else {
@@ -148,7 +138,6 @@ func (fsys *FS) getNode(path string, fh uint64) (node vfs.Node, handle vfs.Handl
 
 // stat fills up the stat block for Node
 func (fsys *FS) stat(node vfs.Node, stat *fuse.Stat_t) (errc int) {
-	fmt.Printf("%s     [Internal]: stat: start\n", time.Now().Format("15:04:05.000"))
 	Size := uint64(node.Size())
 	Blocks := (Size + 511) / 512
 	modTime := node.ModTime()
@@ -173,7 +162,6 @@ func (fsys *FS) stat(node vfs.Node, stat *fuse.Stat_t) (errc int) {
 
 // Init is called after the filesystem is ready
 func (fsys *FS) Init() {
-	fmt.Printf("%s ===> FUSE: Init: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(fsys.f, "")("")
 	close(fsys.ready)
 }
@@ -182,14 +170,12 @@ func (fsys *FS) Init() {
 // the file system is terminated the file system may not receive the
 // Destroy call).
 func (fsys *FS) Destroy() {
-	fmt.Printf("%s ===> FUSE: Destroy: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(fsys.f, "")("")
 	fsys.destroyed.Store(1)
 }
 
 // Getattr reads the attributes for path
 func (fsys *FS) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc int) {
-	fmt.Printf("%s ===> FUSE: Getattr: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "fh=0x%X", fh)("errc=%v", &errc)
 	node, _, errc := fsys.getNode(path, fh)
 	if errc == 0 {
@@ -200,7 +186,6 @@ func (fsys *FS) Getattr(path string, stat *fuse.Stat_t, fh uint64) (errc int) {
 
 // Opendir opens path as a directory
 func (fsys *FS) Opendir(path string) (errc int, fh uint64) {
-	fmt.Printf("%s ===> FUSE: Opendir: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "")("errc=%d, fh=0x%X", &errc, &fh)
 	handle, err := fsys.VFS.OpenFile(path, os.O_RDONLY, 0777)
 	if err != nil {
@@ -214,7 +199,6 @@ func (fsys *FS) Readdir(dirPath string,
 	fill func(name string, stat *fuse.Stat_t, ofst int64) bool,
 	ofst int64,
 	fh uint64) (errc int) {
-	fmt.Printf("%s ===> FUSE: Readdir: start\n", time.Now().Format("15:04:05.000"))
 	itemsRead := -1
 	defer log.Trace(dirPath, "ofst=%d, fh=0x%X", ofst, fh)("items=%d, errc=%d", &itemsRead, &errc)
 
@@ -267,14 +251,12 @@ func (fsys *FS) Readdir(dirPath string,
 
 // Releasedir finished reading the directory
 func (fsys *FS) Releasedir(path string, fh uint64) (errc int) {
-	fmt.Printf("%s ===> FUSE: Releasedir: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "fh=0x%X", fh)("errc=%d", &errc)
 	return fsys.closeHandle(fh)
 }
 
 // Statfs reads overall stats on the filesystem
 func (fsys *FS) Statfs(path string, stat *fuse.Statfs_t) (errc int) {
-	fmt.Printf("%s ===> FUSE: Statfs: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "")("stat=%+v, errc=%d", stat, &errc)
 	const blockSize = 4096
 	total, _, free := fsys.VFS.Statfs()
@@ -294,7 +276,6 @@ func (fsys *FS) Statfs(path string, stat *fuse.Statfs_t) (errc int) {
 
 // OpenEx opens a file
 func (fsys *FS) OpenEx(path string, fi *fuse.FileInfo_t) (errc int) {
-	fmt.Printf("%s ===> FUSE: OpenEx: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "flags=0x%X", fi.Flags)("errc=%d, fh=0x%X", &errc, &fi.Fh)
 	fi.Fh = fhUnset
 
@@ -319,7 +300,6 @@ func (fsys *FS) OpenEx(path string, fi *fuse.FileInfo_t) (errc int) {
 
 // Open opens a file
 func (fsys *FS) Open(path string, flags int) (errc int, fh uint64) {
-	fmt.Printf("%s ===> FUSE: Open: start\n", time.Now().Format("15:04:05.000"))
 	var fi = fuse.FileInfo_t{
 		Flags: flags,
 	}
@@ -329,7 +309,6 @@ func (fsys *FS) Open(path string, flags int) (errc int, fh uint64) {
 
 // CreateEx creates and opens a file.
 func (fsys *FS) CreateEx(filePath string, mode uint32, fi *fuse.FileInfo_t) (errc int) {
-	fmt.Printf("%s ===> FUSE: CreateEx: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(filePath, "flags=0x%X, mode=0%o", fi.Flags, mode)("errc=%d, fh=0x%X", &errc, &fi.Fh)
 	fi.Fh = fhUnset
 	leaf, parentDir, errc := fsys.lookupParentDir(filePath)
@@ -352,7 +331,6 @@ func (fsys *FS) CreateEx(filePath string, mode uint32, fi *fuse.FileInfo_t) (err
 
 // Create creates and opens a file.
 func (fsys *FS) Create(filePath string, flags int, mode uint32) (errc int, fh uint64) {
-	fmt.Printf("%s ===> FUSE: Create: start\n", time.Now().Format("15:04:05.000"))
 	var fi = fuse.FileInfo_t{
 		Flags: flags,
 	}
@@ -362,7 +340,6 @@ func (fsys *FS) Create(filePath string, flags int, mode uint32) (errc int, fh ui
 
 // Truncate truncates a file to size
 func (fsys *FS) Truncate(path string, size int64, fh uint64) (errc int) {
-	fmt.Printf("%s ===> FUSE: Truncate: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "size=%d, fh=0x%X", size, fh)("errc=%d", &errc)
 	node, handle, errc := fsys.getNode(path, fh)
 	if errc != 0 {
@@ -382,7 +359,6 @@ func (fsys *FS) Truncate(path string, size int64, fh uint64) (errc int) {
 
 // Read data from file handle
 func (fsys *FS) Read(path string, buff []byte, ofst int64, fh uint64) (n int) {
-	fmt.Printf("%s ===> FUSE: Read: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "ofst=%d, fh=0x%X", ofst, fh)("n=%d", &n)
 	handle, errc := fsys.getHandle(fh)
 	if errc != 0 {
@@ -398,7 +374,6 @@ func (fsys *FS) Read(path string, buff []byte, ofst int64, fh uint64) (n int) {
 
 // Write data to file handle
 func (fsys *FS) Write(path string, buff []byte, ofst int64, fh uint64) (n int) {
-	fmt.Printf("%s ===> FUSE: Write: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "ofst=%d, fh=0x%X", ofst, fh)("n=%d", &n)
 	handle, errc := fsys.getHandle(fh)
 	if errc != 0 {
@@ -413,7 +388,6 @@ func (fsys *FS) Write(path string, buff []byte, ofst int64, fh uint64) (n int) {
 
 // Flush flushes an open file descriptor or path
 func (fsys *FS) Flush(path string, fh uint64) (errc int) {
-	fmt.Printf("%s ===> FUSE: Flush: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "fh=0x%X", fh)("errc=%d", &errc)
 	handle, errc := fsys.getHandle(fh)
 	if errc != 0 {
@@ -424,7 +398,6 @@ func (fsys *FS) Flush(path string, fh uint64) (errc int) {
 
 // Release closes the file if still open
 func (fsys *FS) Release(path string, fh uint64) (errc int) {
-	fmt.Printf("%s ===> FUSE: Release: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "fh=0x%X", fh)("errc=%d", &errc)
 	handle, errc := fsys.getHandle(fh)
 	if errc != 0 {
@@ -436,7 +409,6 @@ func (fsys *FS) Release(path string, fh uint64) (errc int) {
 
 // Unlink removes a file.
 func (fsys *FS) Unlink(filePath string) (errc int) {
-	fmt.Printf("%s ===> FUSE: Unlink: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(filePath, "")("errc=%d", &errc)
 	leaf, parentDir, errc := fsys.lookupParentDir(filePath)
 	if errc != 0 {
@@ -447,7 +419,6 @@ func (fsys *FS) Unlink(filePath string) (errc int) {
 
 // Mkdir creates a directory.
 func (fsys *FS) Mkdir(dirPath string, mode uint32) (errc int) {
-	fmt.Printf("%s ===> FUSE: Mkdir: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(dirPath, "mode=0%o", mode)("errc=%d", &errc)
 	leaf, parentDir, errc := fsys.lookupParentDir(dirPath)
 	if errc != 0 {
@@ -459,7 +430,6 @@ func (fsys *FS) Mkdir(dirPath string, mode uint32) (errc int) {
 
 // Rmdir removes a directory
 func (fsys *FS) Rmdir(dirPath string) (errc int) {
-	fmt.Printf("%s ===> FUSE: Rmdir: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(dirPath, "")("errc=%d", &errc)
 	leaf, parentDir, errc := fsys.lookupParentDir(dirPath)
 	if errc != 0 {
@@ -470,7 +440,6 @@ func (fsys *FS) Rmdir(dirPath string) (errc int) {
 
 // Rename renames a file.
 func (fsys *FS) Rename(oldPath string, newPath string) (errc int) {
-	fmt.Printf("%s ===> FUSE: Rename: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(oldPath, "newPath=%q", newPath)("errc=%d", &errc)
 	return translateError(fsys.VFS.Rename(oldPath, newPath))
 }
@@ -482,7 +451,6 @@ var invalidDateCutoff = time.Date(1601, 1, 2, 0, 0, 0, 0, time.UTC)
 
 // Utimens changes the access and modification times of a file.
 func (fsys *FS) Utimens(path string, tmsp []fuse.Timespec) (errc int) {
-	fmt.Printf("%s ===> FUSE: Utimens: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "tmsp=%+v", tmsp)("errc=%d", &errc)
 	node, errc := fsys.lookupNode(path)
 	if errc != 0 {
@@ -503,14 +471,12 @@ func (fsys *FS) Utimens(path string, tmsp []fuse.Timespec) (errc int) {
 
 // Mknod creates a file node.
 func (fsys *FS) Mknod(path string, mode uint32, dev uint64) (errc int) {
-	fmt.Printf("%s ===> FUSE: Mknod: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "mode=0x%X, dev=0x%X", mode, dev)("errc=%d", &errc)
 	return -fuse.ENOSYS
 }
 
 // Fsync synchronizes file contents.
 func (fsys *FS) Fsync(path string, datasync bool, fh uint64) (errc int) {
-	fmt.Printf("%s ===> FUSE: Fsync: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "datasync=%v, fh=0x%X", datasync, fh)("errc=%d", &errc)
 	// This is a no-op for rclone
 	return 0
@@ -518,21 +484,18 @@ func (fsys *FS) Fsync(path string, datasync bool, fh uint64) (errc int) {
 
 // Link creates a hard link to a file.
 func (fsys *FS) Link(oldpath string, newpath string) (errc int) {
-	fmt.Printf("%s ===> FUSE: Link: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(oldpath, "newpath=%q", newpath)("errc=%d", &errc)
 	return -fuse.ENOSYS
 }
 
 // Symlink creates a symbolic link.
 func (fsys *FS) Symlink(target string, newpath string) (errc int) {
-	fmt.Printf("%s ===> FUSE: Symlink: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(target, "newpath=%q, target=%q", newpath, target)("errc=%d", &errc)
 	return translateError(fsys.VFS.Symlink(target, newpath))
 }
 
 // Readlink reads the target of a symbolic link.
 func (fsys *FS) Readlink(path string) (errc int, linkPath string) {
-	fmt.Printf("%s ===> FUSE: Readlink: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "")("errc=%v, linkPath=%q", &errc, linkPath)
 	linkPath, err := fsys.VFS.Readlink(path)
 	return translateError(err), linkPath
@@ -540,7 +503,6 @@ func (fsys *FS) Readlink(path string) (errc int, linkPath string) {
 
 // Chmod changes the permission bits of a file.
 func (fsys *FS) Chmod(path string, mode uint32) (errc int) {
-	fmt.Printf("%s ===> FUSE: Chmod: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "mode=0%o", mode)("errc=%d", &errc)
 	// This is a no-op for rclone
 	return 0
@@ -548,7 +510,6 @@ func (fsys *FS) Chmod(path string, mode uint32) (errc int) {
 
 // Chown changes the owner and group of a file.
 func (fsys *FS) Chown(path string, uid uint32, gid uint32) (errc int) {
-	fmt.Printf("%s ===> FUSE: Chown: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "uid=%d, gid=%d", uid, gid)("errc=%d", &errc)
 	// This is a no-op for rclone
 	return 0
@@ -556,7 +517,6 @@ func (fsys *FS) Chown(path string, uid uint32, gid uint32) (errc int) {
 
 // Access checks file access permissions.
 func (fsys *FS) Access(path string, mask uint32) (errc int) {
-	fmt.Printf("%s ===> FUSE: Access: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "mask=0%o", mask)("errc=%d", &errc)
 	// This is a no-op for rclone
 	return 0
@@ -564,7 +524,6 @@ func (fsys *FS) Access(path string, mask uint32) (errc int) {
 
 // Fsyncdir synchronizes directory contents.
 func (fsys *FS) Fsyncdir(path string, datasync bool, fh uint64) (errc int) {
-	fmt.Printf("%s ===> FUSE: Fsyncdir: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "datasync=%v, fh=0x%X", datasync, fh)("errc=%d", &errc)
 	// This is a no-op for rclone
 	return 0
@@ -572,28 +531,24 @@ func (fsys *FS) Fsyncdir(path string, datasync bool, fh uint64) (errc int) {
 
 // Setxattr sets extended attributes.
 func (fsys *FS) Setxattr(path string, name string, value []byte, flags int) (errc int) {
-	fmt.Printf("%s ===> FUSE: Setxattr: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "name=%q, value=%q, flags=%d", name, value, flags)("errc=%d", &errc)
 	return -fuse.ENOSYS
 }
 
 // Getxattr gets extended attributes.
 func (fsys *FS) Getxattr(path string, name string) (errc int, value []byte) {
-	fmt.Printf("%s ===> FUSE: Getxattr: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "name=%q", name)("errc=%d, value=%q", &errc, &value)
 	return -fuse.ENOSYS, nil
 }
 
 // Removexattr removes extended attributes.
 func (fsys *FS) Removexattr(path string, name string) (errc int) {
-	fmt.Printf("%s ===> FUSE: Removexattr: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "name=%q", name)("errc=%d", &errc)
 	return -fuse.ENOSYS
 }
 
 // Listxattr lists extended attributes.
 func (fsys *FS) Listxattr(path string, fill func(name string) bool) (errc int) {
-	fmt.Printf("%s ===> FUSE: Listxattr: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "fill=%p", fill)("errc=%d", &errc)
 	return -fuse.ENOSYS
 }
@@ -601,7 +556,6 @@ func (fsys *FS) Listxattr(path string, fill func(name string) bool) (errc int) {
 // Getpath allows a case-insensitive file system to report the correct case of
 // a file path.
 func (fsys *FS) Getpath(path string, fh uint64) (errc int, normalisedPath string) {
-	fmt.Printf("%s ===> FUSE: Getpath: start\n", time.Now().Format("15:04:05.000"))
 	defer log.Trace(path, "Getpath fh=%d", fh)("errc=%d, normalisedPath=%q", &errc, &normalisedPath)
 	node, _, errc := fsys.getNode(path, fh)
 	if errc != 0 {
@@ -616,7 +570,6 @@ func (fsys *FS) Getpath(path string, fh uint64) (errc int, normalisedPath string
 
 // Translate errors from mountlib
 func translateError(err error) (errc int) {
-	fmt.Printf("%s     [Internal]: translateError: start\n", time.Now().Format("15:04:05.000"))
 	if err == nil {
 		return 0
 	}
@@ -653,7 +606,6 @@ func translateError(err error) (errc int) {
 
 // Translate Open Flags from FUSE to os (as used in the vfs layer)
 func translateOpenFlags(inFlags int) (outFlags int) {
-	fmt.Printf("%s     [Internal]: translateOpenFlags: start\n", time.Now().Format("15:04:05.000"))
 	switch inFlags & fuse.O_ACCMODE {
 	case fuse.O_RDONLY:
 		outFlags = os.O_RDONLY
@@ -680,7 +632,6 @@ func translateOpenFlags(inFlags int) (outFlags int) {
 
 // get the Mode from a vfs Node
 func getMode(node os.FileInfo) uint32 {
-	fmt.Printf("%s     [Internal]: getMode: start\n", time.Now().Format("15:04:05.000"))
 	vfsMode := node.Mode()
 	Mode := vfsMode.Perm()
 	if vfsMode&os.ModeDir != 0 {
