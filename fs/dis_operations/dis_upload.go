@@ -29,6 +29,67 @@ var (
 	createEmptySrcDirs = false
 )
 
+const (
+	uploadRetryAttempts  = 3
+	uploadRetryBaseDelay = 700 * time.Millisecond
+)
+
+func isTransientUploadError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	transientMarkers := []string{
+		"unexpected end of json input",
+		"unexpected eof",
+		"eof",
+		"timeout",
+		"temporary",
+		"connection reset",
+		"connection refused",
+		"connection aborted",
+		"broken pipe",
+		"too many requests",
+		"rate limit",
+		"429",
+		"500",
+		"502",
+		"503",
+		"504",
+	}
+
+	for _, marker := range transientMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func retryUploadOperation(label string, fn func() error) error {
+	var lastErr error
+	for attempt := 1; attempt <= uploadRetryAttempts; attempt++ {
+		lastErr = fn()
+		if lastErr == nil {
+			if attempt > 1 {
+				fmt.Printf("[UNIC Retry] %s succeeded on attempt %d/%d\n", label, attempt, uploadRetryAttempts)
+			}
+			return nil
+		}
+
+		if attempt == uploadRetryAttempts || !isTransientUploadError(lastErr) {
+			return lastErr
+		}
+
+		delay := uploadRetryBaseDelay * time.Duration(1<<(attempt-1))
+		fmt.Printf("[UNIC Retry] %s failed on attempt %d/%d: %v. Retrying in %s...\n",
+			label, attempt, uploadRetryAttempts, lastErr, delay)
+		time.Sleep(delay)
+	}
+	return lastErr
+}
+
 var copyCommandDefinition = &cobra.Command{
 	Use: "copy source:path dest:path",
 	Annotations: map[string]string{
@@ -283,7 +344,12 @@ func uploadFile(fsrc, fdst fs.Fs, shardFileName string, mu *sync.Mutex, totalThr
 	// Measure time for upload
 	startTime := time.Now()
 	// Use operations.CopyFile directly with the reused sessions
-	err = operations.CopyFile(context.Background(), fdst, fsrc, shardFileName, shardFileName)
+	err = retryUploadOperation(
+		fmt.Sprintf("copy shard %s to %s", shardFileName, shardInfo.Remote.String()),
+		func() error {
+			return operations.CopyFile(context.Background(), fdst, fsrc, shardFileName, shardFileName)
+		},
+	)
 	if err != nil {
 		mu.Lock()
 		*errs = append(*errs, fmt.Errorf("error in operations.CopyFile for file %s: %w", shardFileName, err))
@@ -458,7 +524,12 @@ func MakeDistributionDir(sessions map[string]fs.Fs) error {
 		go func(remoteName string, fsObj fs.Fs) {
 			defer wg.Done()
 
-			err := operations.Mkdir(context.Background(), fsObj, "")
+			err := retryUploadOperation(
+				fmt.Sprintf("mkdir Distribution/%s on %s", fsObj.Root(), remoteName),
+				func() error {
+					return operations.Mkdir(context.Background(), fsObj, "")
+				},
+			)
 			if err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("error creating directory on %s: %w", remoteName, err))
