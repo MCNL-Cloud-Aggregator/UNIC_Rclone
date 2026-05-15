@@ -14,6 +14,7 @@ import (
 
 	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/reedsolomon"
 	"github.com/spf13/cobra"
@@ -73,7 +74,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 
 	start := time.Now()
 	fmt.Printf("---initDownloadSessions start---\n")
-	sessions, err := initDownloadSessions(distributedFileInfos, fileId, fileInfoForDriveId.DriveIdMap, fileInfoForDriveId.FolderIdMap)
+	sessions, err := initDownloadSessions(distributedFileInfos, fileId, fileInfoForDriveId.DriveIdMap, fileInfoForDriveId.FolderIdMap, fileInfoForDriveId.RemoteTypeMap, fileInfoForDriveId.SharedToEmailMap)
 	if err != nil {
 		return err
 	}
@@ -154,7 +155,7 @@ type downloadSession struct {
 	ConnString string
 }
 
-func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, folderIdMap map[string]string) (map[string]downloadSession, error) {
+func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, folderIdMap, remoteTypeMap, sharedToEmailMap map[string]string) (map[string]downloadSession, error) {
 	sessions := make(map[string]downloadSession)
 	uniqueRemotes := make(map[string]DistributedFile)
 	for _, s := range shards {
@@ -162,25 +163,44 @@ func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, f
 	}
 
 	for id, s := range uniqueRemotes {
-		remoteName := s.Remote.Name
-		remoteType := s.Remote.Type
-		targetDriveId, hasSharedDriveId := driveIdMap[remoteName]
-		targetFolderId, hasFolderId := folderIdMap[remoteName]
+		ownerRemoteName := s.Remote.Name
+		remoteType := strings.TrimSpace(remoteTypeMap[ownerRemoteName])
+		if remoteType == "" {
+			remoteType = s.Remote.Type
+		}
+		sharedToEmail := strings.TrimSpace(sharedToEmailMap[ownerRemoteName])
 
-		defaultConnString := fmt.Sprintf("%s:%s/%s", remoteName, remoteDirectory, fileId)
+		localRemoteName := ownerRemoteName
+		hasSharingRemoteMetadata := remoteType != "" && sharedToEmail != ""
+		if hasSharingRemoteMetadata {
+			var ok bool
+			localRemoteName, ok = findLocalRemoteName(remoteType, sharedToEmail)
+			if !ok {
+				return nil, fmt.Errorf("shared file requires %s remote for %s; please connect that account first", remoteType, sharedToEmail)
+			}
+		} else {
+			if UseSharingJson {
+				fmt.Printf("[shared-download] metadata missing remote_type/shared_to_email; falling back to owner remote name\n")
+			}
+		}
+
+		targetDriveId, hasSharedDriveId := driveIdMap[ownerRemoteName]
+		targetFolderId, hasFolderId := folderIdMap[ownerRemoteName]
+
+		defaultConnString := fmt.Sprintf("%s:%s/%s", localRemoteName, remoteDirectory, fileId)
 		connStrings := []string{}
 
 		switch {
-		case hasSharedDriveId && remoteType == "onedrive":
+		case hasSharedDriveId && strings.EqualFold(remoteType, "onedrive"):
 			actualDriveId := targetDriveId
-			if strings.Contains(targetFolderId, "!") {
+			if actualDriveId == "" && strings.Contains(targetFolderId, "!") {
 				actualDriveId = strings.Split(targetFolderId, "!")[0]
 			}
-			connStrings = append(connStrings, fmt.Sprintf("%s,drive_id=%s,root_folder_id=%s:", remoteName, actualDriveId, targetFolderId))
-		case hasFolderId && remoteType == "drive":
-			connStrings = append(connStrings, fmt.Sprintf("%s,root_folder_id=%s:", remoteName, targetFolderId))
-		case hasFolderId && remoteType == "dropbox":
-			connStrings = append(connStrings, fmt.Sprintf("%s,root_namespace=%s:", remoteName, targetFolderId))
+			connStrings = append(connStrings, fmt.Sprintf("%s,drive_id=%s,root_folder_id=%s:", localRemoteName, actualDriveId, targetFolderId))
+		case hasFolderId && strings.EqualFold(remoteType, "drive"):
+			connStrings = append(connStrings, fmt.Sprintf("%s,root_folder_id=%s:", localRemoteName, targetFolderId))
+		case hasFolderId && strings.EqualFold(remoteType, "dropbox"):
+			connStrings = append(connStrings, fmt.Sprintf("%s,root_namespace=%s:", localRemoteName, targetFolderId))
 		}
 		connStrings = append(connStrings, defaultConnString)
 
@@ -204,6 +224,19 @@ func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, f
 		sessions[id] = downloadSession{Fs: fsrc, ConnString: selectedConnString}
 	}
 	return sessions, nil
+}
+
+func findLocalRemoteName(remoteType, sharedToEmail string) (string, bool) {
+	for _, remote := range config.GetRemotes() {
+		if !strings.EqualFold(remote.Type, remoteType) {
+			continue
+		}
+		email := strings.TrimSpace(config.GetValue(remote.Name, "email"))
+		if strings.EqualFold(email, sharedToEmail) {
+			return remote.Name, true
+		}
+	}
+	return "", false
 }
 
 func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, fileId string, sessions map[string]downloadSession, requiredShards int, parityShards int) (err error) {

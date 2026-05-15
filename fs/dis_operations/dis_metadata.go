@@ -35,6 +35,8 @@ type FileInfo struct {
 	Password             string                     `json:"password,omitempty"` // Added for shared decryption
 	DriveIdMap           map[string]string          `json:"drive_id,omitempty"` // Add DriveIdMap for shared file downloads
 	FolderIdMap          map[string]string          `json:"folder_id,omitempty"`
+	RemoteTypeMap        map[string]string          `json:"remote_type,omitempty"`
+	SharedToEmailMap     map[string]string          `json:"shared_to_email,omitempty"`
 	DistributedFileInfos map[string]DistributedFile `json:"distributed_file_infos"`
 }
 
