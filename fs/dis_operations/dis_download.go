@@ -131,6 +131,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 		return nil
 	}
 	fmt.Printf("---DoDecode end---\n")
+	notifyDownloadProgress(fileId, len(distributedFileInfos), len(distributedFileInfos), 0, "reed-solomon")
 
 	// change Flag and Check to false
 	err = ResetCheckFlag(args[0])
@@ -227,16 +228,48 @@ func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, f
 }
 
 func findLocalRemoteName(remoteType, sharedToEmail string) (string, bool) {
+	var matches []string
 	for _, remote := range config.GetRemotes() {
 		if !strings.EqualFold(remote.Type, remoteType) {
 			continue
 		}
 		email := strings.TrimSpace(config.GetValue(remote.Name, "email"))
 		if strings.EqualFold(email, sharedToEmail) {
-			return remote.Name, true
+			matches = append(matches, remote.Name)
 		}
 	}
-	return "", false
+
+	if len(matches) == 0 {
+		return "", false
+	}
+
+	upstreamSet := make(map[string]bool)
+	for _, upstream := range strings.Fields(config.GetValue("unic", "upstreams")) {
+		name := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(upstream), ":/"), ":")
+		if name != "" {
+			upstreamSet[name] = true
+		}
+	}
+
+	for _, name := range matches {
+		if upstreamSet[name] {
+			if len(matches) > 1 {
+				fmt.Printf("[shared-download] selected local remote %s for %s %s from unic upstreams (candidates: %s)\n", name, remoteType, sharedToEmail, strings.Join(matches, ", "))
+			}
+			return name, true
+		}
+	}
+
+	for _, name := range matches {
+		if !strings.HasPrefix(name, "my_") {
+			if len(matches) > 1 {
+				fmt.Printf("[shared-download] selected local remote %s for %s %s from modern names (candidates: %s)\n", name, remoteType, sharedToEmail, strings.Join(matches, ", "))
+			}
+			return name, true
+		}
+	}
+
+	return matches[0], true
 }
 
 func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, fileId string, sessions map[string]downloadSession, requiredShards int, parityShards int) (err error) {
@@ -382,14 +415,17 @@ func downloadFile(fileInfo DistributedFile, fdst fs.Fs, fsrc fs.Fs, connString s
 	currentFileCount := *fileCount
 	mu.Unlock()
 
-	// Notify Progress to Electron App
-	go func(current int, total int, speed float64, remote string) {
-		client := http.Client{Timeout: 2 * time.Second}
-		payload := fmt.Sprintf(`{"action": "progress", "type": "download", "fileId": "%s", "completedShards": %d, "totalShards": %d, "throughputKbps": %.2f, "remoteName": "%s"}`, fileId, current, total, speed, remote)
-		client.Post("http://localhost:9090/notify-upload", "application/json", bytes.NewBuffer([]byte(payload)))
-	}(currentFileCount, totalShards, throughputKbps, fileInfo.Remote.String())
+	notifyDownloadProgress(fileId, currentFileCount, totalShards, throughputKbps, fileInfo.Remote.String())
 
 	return nil
+}
+
+func notifyDownloadProgress(fileId string, completedShards int, totalShards int, throughputKbps float64, remoteName string) {
+	go func() {
+		client := http.Client{Timeout: 2 * time.Second}
+		payload := fmt.Sprintf(`{"action": "progress", "type": "download", "fileId": "%s", "completedShards": %d, "totalShards": %d, "throughputKbps": %.2f, "remoteName": "%s"}`, fileId, completedShards, totalShards, throughputKbps, remoteName)
+		_, _ = client.Post("http://localhost:9090/notify-upload", "application/json", bytes.NewBuffer([]byte(payload)))
+	}()
 }
 
 func updateRemoteInfo_Down(fileId string, shardInfo DistributedFile, throughputKbps float64, mu *sync.Mutex) error {

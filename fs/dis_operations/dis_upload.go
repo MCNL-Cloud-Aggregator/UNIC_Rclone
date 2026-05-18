@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -90,6 +91,20 @@ func retryUploadOperation(label string, fn func() error) error {
 	return lastErr
 }
 
+func copyShardWithRcloneCopyTo(remoteName, fileId, shardFileName string) error {
+	src := filepath.Join(GetShardPath(), shardFileName)
+	dst := fmt.Sprintf("%s:%s/%s/%s", remoteName, remoteDirectory, fileId, shardFileName)
+
+	cmd := exec.Command(os.Args[0], "copyto", src, dst)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("rclone copyto fallback failed: %w: %s", err, strings.TrimSpace(out.String()))
+	}
+	return nil
+}
+
 var copyCommandDefinition = &cobra.Command{
 	Use: "copy source:path dest:path",
 	Annotations: map[string]string{
@@ -150,7 +165,7 @@ func Dis_Upload(args []string, target UploadTargets, reSignal bool, loadBalancer
 		if err != nil {
 			return err
 		}
-		err = MakeDistributionDir(sessions)
+		err = MakeDistributionDir(remotes, fileId)
 		if err != nil {
 			return err
 		}
@@ -297,7 +312,7 @@ func prepareUpload(absolutePath string, backendRemote string, fileId string, tar
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	err = MakeDistributionDir(sessions)
+	err = MakeDistributionDir(remotes, fileId)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -343,18 +358,45 @@ func uploadFile(fsrc, fdst fs.Fs, shardFileName string, mu *sync.Mutex, totalThr
 
 	// Measure time for upload
 	startTime := time.Now()
-	// Use operations.CopyFile directly with the reused sessions
-	err = retryUploadOperation(
-		fmt.Sprintf("copy shard %s to %s", shardFileName, shardInfo.Remote.String()),
-		func() error {
-			return operations.CopyFile(context.Background(), fdst, fsrc, shardFileName, shardFileName)
-		},
-	)
-	if err != nil {
-		mu.Lock()
-		*errs = append(*errs, fmt.Errorf("error in operations.CopyFile for file %s: %w", shardFileName, err))
-		mu.Unlock()
-		return err
+	if strings.EqualFold(shardInfo.Remote.Type, "dropbox") {
+		err = retryUploadOperation(
+			fmt.Sprintf("copyto shard %s to %s", shardFileName, shardInfo.Remote.String()),
+			func() error {
+				return copyShardWithRcloneCopyTo(shardInfo.Remote.Name, fileId, shardFileName)
+			},
+		)
+		if err != nil {
+			mu.Lock()
+			*errs = append(*errs, fmt.Errorf("error uploading file %s with copyto: %w", shardFileName, err))
+			mu.Unlock()
+			return err
+		}
+	} else {
+		// Use operations.CopyFile directly with the reused sessions
+		err = retryUploadOperation(
+			fmt.Sprintf("copy shard %s to %s", shardFileName, shardInfo.Remote.String()),
+			func() error {
+				return operations.CopyFile(context.Background(), fdst, fsrc, shardFileName, shardFileName)
+			},
+		)
+		if err != nil {
+			copyErr := err
+			fmt.Printf("[UNIC Fallback] CopyFile failed for shard %s on %s: %v. Falling back to rclone copyto.\n",
+				shardFileName, shardInfo.Remote.String(), copyErr)
+
+			err = retryUploadOperation(
+				fmt.Sprintf("copyto shard %s to %s", shardFileName, shardInfo.Remote.String()),
+				func() error {
+					return copyShardWithRcloneCopyTo(shardInfo.Remote.Name, fileId, shardFileName)
+				},
+			)
+			if err != nil {
+				mu.Lock()
+				*errs = append(*errs, fmt.Errorf("error uploading file %s: CopyFile error: %w; copyto fallback error: %v", shardFileName, copyErr, err))
+				mu.Unlock()
+				return err
+			}
+		}
 	}
 	elapsedTime := time.Since(startTime)
 
@@ -497,46 +539,52 @@ func initRemoteSessions(remotes []config.Remote, fileId string) (map[string]fs.F
 
 	for _, remote := range remotes {
 		argument := fmt.Sprintf("%s:%s/%s", remote.Name, remoteDirectory, fileId)
+		remoteIdentity := Remote{Name: remote.Name, Type: remote.Type}.String()
 		wg.Add(1)
 
-		go func(remoteName, arg string) {
+		go func(remoteName, identity, arg string) {
 			defer wg.Done()
 
 			fdst := cmd.NewFsDir([]string{arg})
 			mu.Lock()
+			sessions[identity] = fdst
 			sessions[remoteName] = fdst
 			mu.Unlock()
-		}(remote.Name, argument)
+		}(remote.Name, remoteIdentity, argument)
 	}
 
 	wg.Wait()
 	return sessions, nil
 }
 
-func MakeDistributionDir(sessions map[string]fs.Fs) error {
+func MakeDistributionDir(remotes []config.Remote, fileId string) error {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var errs []error
 
-	for name, fdst := range sessions {
+	for _, remote := range remotes {
 		wg.Add(1)
 
-		go func(remoteName string, fsObj fs.Fs) {
+		go func(remote config.Remote) {
 			defer wg.Done()
 
+			parentArg := fmt.Sprintf("%s:%s", remote.Name, remoteDirectory)
+			parentFs := cmd.NewFsDir([]string{parentArg})
+			remoteIdentity := Remote{Name: remote.Name, Type: remote.Type}.String()
+
 			err := retryUploadOperation(
-				fmt.Sprintf("mkdir Distribution/%s on %s", fsObj.Root(), remoteName),
+				fmt.Sprintf("mkdir %s/%s on %s", remoteDirectory, fileId, remoteIdentity),
 				func() error {
-					return operations.Mkdir(context.Background(), fsObj, "")
+					return operations.Mkdir(context.Background(), parentFs, fileId)
 				},
 			)
 			if err != nil {
 				mu.Lock()
-				errs = append(errs, fmt.Errorf("error creating directory on %s: %w", remoteName, err))
+				errs = append(errs, fmt.Errorf("error creating directory on %s: %w", remoteIdentity, err))
 				mu.Unlock()
 				return
 			}
-		}(name, fdst)
+		}(remote)
 	}
 
 	wg.Wait()

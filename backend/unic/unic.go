@@ -419,10 +419,6 @@ func (f *Fs) List(ctx context.Context, dir string) (fs.DirEntries, error) {
 // seen을 굳이 map[string]struct{}로 해야하나? string 배열을 사용하면 안되나?
 func (f *Fs) getUpstreamRemotes() []config.Remote {
 	remotes := config.GetRemotes()
-	fmt.Printf("\n[DEBUG getUpstreamRemotes] 전체 리모트(config.GetRemotes()) 개수: %d\n", len(remotes))
-	for _, r := range remotes {
-		fmt.Printf(" - 등록된 리모트: %s (Type: %s)\n", r.Name, r.Type)
-	}
 
 	// 동적으로 rclone.conf에서 최신 upstreams 값을 읽어옴 (f.name은 rclone 설정 파일의 섹션 이름)
 	var currentUpstreams fs.SpaceSepList
@@ -435,25 +431,23 @@ func (f *Fs) getUpstreamRemotes() []config.Remote {
 	}
 
 	seen := make(map[string]struct{})
-	fmt.Printf("[DEBUG getUpstreamRemotes] 파싱된 Upstreams (총 %d개):\n", len(currentUpstreams))
 	for _, upstream := range currentUpstreams {
 		_, configName, _, _, _ := fs.ParseRemote(upstream)
 		//name := strings.TrimSuffix(fsName, ":")
 		seen[configName] = struct{}{}
-		fmt.Printf(" - Upstream 파싱됨: 원본='%s' -> configName='%s'\n", upstream, configName)
 	}
 
 	var result []config.Remote
-	fmt.Printf("[DEBUG getUpstreamRemotes] 필터링 시작:\n")
 	for _, remote := range remotes {
 		if _, ok := seen[remote.Name]; ok {
 			result = append(result, remote)
-			fmt.Printf(" - [Match] 리모트 '%s' (타입: %s) 추가됨\n", remote.Name, remote.Type)
-		} else {
-			fmt.Printf(" - [Skip] 리모트 '%s' (타입: %s) 제외됨\n", remote.Name, remote.Type)
 		}
 	}
-	fmt.Printf("[DEBUG getUpstreamRemotes] 최종 반환 리모트 개수: %d\n\n", len(result))
+	var labels []string
+	for _, remote := range result {
+		labels = append(labels, fmt.Sprintf("%s|%s", remote.Name, remote.Type))
+	}
+	fmt.Printf("[UNIC] upstream remotes: %s\n", strings.Join(labels, ", "))
 
 	return result
 }
