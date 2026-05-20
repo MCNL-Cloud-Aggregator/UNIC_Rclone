@@ -622,40 +622,56 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 	defer f.mu.Unlock()
 	fmt.Printf("%s [%s] UNIC: Rmdir: Rmdir method Start\n", time.Now().Format("15:04:05.000"), dir)
 
-	// open entrytable
-	entryTable, err := os.OpenFile(entrytable_path, os.O_RDWR|os.O_APPEND, 0755)
+	trimmedDir := strings.TrimPrefix(dir, "/")
+
+	oldFile, err := os.Open(entrytable_path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	defer oldFile.Close()
+
+	tempPath := entrytable_path + ".tmp." + fmt.Sprintf("%d", time.Now().UnixNano())
+	newFile, err := os.Create(tempPath)
 	if err != nil {
 		return err
 	}
-	defer entryTable.Close()
+	defer newFile.Close()
 
-	// entrytable decoder/encoder 생성
-	decoder := json.NewDecoder(entryTable)
+	scanner := bufio.NewScanner(oldFile)
+	encoder := json.NewEncoder(newFile)
 
-	// update entrytable
-	for {
-		// entrytable에서 node 하나씩 가져옴
-		var node NodeEntry
-		if err := decoder.Decode(&node); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
 		}
-
-		// node가 dir의 하위 디렉토리인지 확인
-		if !isUnderDir(node.Path, dir) {
+		var node NodeEntry
+		if err := json.Unmarshal(line, &node); err != nil {
 			continue
 		}
 
-		// node가 dir일 경우 entrytable에서 삭제
-		// node가 file일 경우는 어차피 rm -rf 명령어로 재귀적으로 삭제되면서
-		// 해당 file에 대한 Remove() method가 실행됨
-		if node.Type == "dir" {
-			removeNodeFromTable(node.Path)
-		} else {
-			return fmt.Errorf("entrytable.jsonl type error\n")
+		trimmedNodePath := strings.TrimPrefix(node.Path, "/")
+
+		// Skip (delete) the directory itself and any of its descendants
+		if trimmedNodePath == trimmedDir || isUnderDir(trimmedNodePath, trimmedDir) {
+			continue
 		}
+
+		if err := encoder.Encode(node); err != nil {
+			_ = os.Remove(tempPath)
+			return err
+		}
+	}
+
+	oldFile.Close()
+	newFile.Close()
+
+	if err := os.Rename(tempPath, entrytable_path); err != nil {
+		_ = os.Remove(tempPath)
+		return err
 	}
 
 	// 삭제 완료 후 부모 디렉토리 수정시간 갱신 (rmdir)
