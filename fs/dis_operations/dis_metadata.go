@@ -37,6 +37,7 @@ type FileInfo struct {
 	FolderIdMap          map[string]string          `json:"folder_id,omitempty"`
 	RemoteTypeMap        map[string]string          `json:"remote_type,omitempty"`
 	SharedToEmailMap     map[string]string          `json:"shared_to_email,omitempty"`
+	LocalRemoteNameMap   map[string]string          `json:"local_remote_name,omitempty"`
 	DistributedFileInfos map[string]DistributedFile `json:"distributed_file_infos"`
 }
 

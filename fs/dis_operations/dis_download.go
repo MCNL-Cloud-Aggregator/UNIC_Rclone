@@ -74,7 +74,7 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 
 	start := time.Now()
 	fmt.Printf("---initDownloadSessions start---\n")
-	sessions, err := initDownloadSessions(distributedFileInfos, fileId, fileInfoForDriveId.DriveIdMap, fileInfoForDriveId.FolderIdMap, fileInfoForDriveId.RemoteTypeMap, fileInfoForDriveId.SharedToEmailMap)
+	sessions, err := initDownloadSessions(distributedFileInfos, fileId, fileInfoForDriveId.DriveIdMap, fileInfoForDriveId.FolderIdMap, fileInfoForDriveId.RemoteTypeMap, fileInfoForDriveId.SharedToEmailMap, fileInfoForDriveId.LocalRemoteNameMap)
 	if err != nil {
 		return err
 	}
@@ -160,7 +160,7 @@ type downloadSource struct {
 	ConnString string
 }
 
-func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, folderIdMap, remoteTypeMap, sharedToEmailMap map[string]string) (map[string]downloadSession, error) {
+func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, folderIdMap, remoteTypeMap, sharedToEmailMap, localRemoteNameMap map[string]string) (map[string]downloadSession, error) {
 	sessions := make(map[string]downloadSession)
 	uniqueRemotes := make(map[string]DistributedFile)
 	for _, s := range shards {
@@ -174,23 +174,45 @@ func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, f
 			remoteType = s.Remote.Type
 		}
 		sharedToEmail := strings.TrimSpace(sharedToEmailMap[ownerRemoteName])
+		if sharedToEmail == "" {
+			sharedToEmail = findMetadataValueByRemoteType(remoteTypeMap, sharedToEmailMap, remoteType)
+		}
 
-		localRemoteName := ownerRemoteName
 		hasSharingRemoteMetadata := remoteType != "" && sharedToEmail != ""
+		localRemoteName := strings.TrimSpace(localRemoteNameMap[ownerRemoteName])
 		if hasSharingRemoteMetadata {
+			if localRemoteName != "" && !isUnicUpstream(localRemoteName) {
+				fmt.Printf("[shared-download] ignoring stale prepared local remote %s for owner remote %s; it is not in current unic upstreams\n", localRemoteName, ownerRemoteName)
+				localRemoteName = ""
+			}
+		}
+		if hasSharingRemoteMetadata && localRemoteName == "" {
 			var ok bool
 			localRemoteName, ok = findLocalRemoteName(remoteType, sharedToEmail)
 			if !ok {
-				return nil, fmt.Errorf("shared file requires %s remote for %s; please connect that account first", remoteType, sharedToEmail)
+				return nil, fmt.Errorf("shared file requires active unic upstream %s remote for %s; please connect that account first", remoteType, sharedToEmail)
 			}
+		} else if hasSharingRemoteMetadata && localRemoteName != "" {
+			fmt.Printf("[shared-download] using prepared local remote %s for owner remote %s (%s %s)\n", localRemoteName, ownerRemoteName, remoteType, sharedToEmail)
 		} else {
+			if localRemoteName == "" {
+				localRemoteName = ownerRemoteName
+			}
 			if UseSharingJson {
 				fmt.Printf("[shared-download] metadata missing remote_type/shared_to_email; falling back to owner remote name\n")
 			}
 		}
 
 		targetDriveId, hasSharedDriveId := driveIdMap[ownerRemoteName]
+		if !hasSharedDriveId {
+			targetDriveId = findMetadataValueByRemoteType(remoteTypeMap, driveIdMap, remoteType)
+			hasSharedDriveId = targetDriveId != ""
+		}
 		targetFolderId, hasFolderId := folderIdMap[ownerRemoteName]
+		if !hasFolderId {
+			targetFolderId = findMetadataValueByRemoteType(remoteTypeMap, folderIdMap, remoteType)
+			hasFolderId = targetFolderId != ""
+		}
 
 		defaultConnString := fmt.Sprintf("%s:%s/%s", localRemoteName, remoteDirectory, fileId)
 		connStrings := []string{}
@@ -229,6 +251,32 @@ func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, f
 	return sessions, nil
 }
 
+func findMetadataValueByRemoteType(remoteTypeMap map[string]string, values map[string]string, remoteType string) string {
+	for remoteName, mappedType := range remoteTypeMap {
+		if strings.EqualFold(strings.TrimSpace(mappedType), strings.TrimSpace(remoteType)) {
+			if value := strings.TrimSpace(values[remoteName]); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func getUnicUpstreamSet() map[string]bool {
+	upstreamSet := make(map[string]bool)
+	for _, upstream := range strings.Fields(config.GetValue("unic", "upstreams")) {
+		name := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(upstream), ":/"), ":")
+		if name != "" {
+			upstreamSet[name] = true
+		}
+	}
+	return upstreamSet
+}
+
+func isUnicUpstream(remoteName string) bool {
+	return getUnicUpstreamSet()[strings.TrimSpace(remoteName)]
+}
+
 func findLocalRemoteName(remoteType, sharedToEmail string) (string, bool) {
 	var matches []string
 	for _, remote := range config.GetRemotes() {
@@ -245,14 +293,7 @@ func findLocalRemoteName(remoteType, sharedToEmail string) (string, bool) {
 		return "", false
 	}
 
-	upstreamSet := make(map[string]bool)
-	for _, upstream := range strings.Fields(config.GetValue("unic", "upstreams")) {
-		name := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(upstream), ":/"), ":")
-		if name != "" {
-			upstreamSet[name] = true
-		}
-	}
-
+	upstreamSet := getUnicUpstreamSet()
 	for _, name := range matches {
 		if upstreamSet[name] {
 			if len(matches) > 1 {
@@ -262,16 +303,8 @@ func findLocalRemoteName(remoteType, sharedToEmail string) (string, bool) {
 		}
 	}
 
-	for _, name := range matches {
-		if !strings.HasPrefix(name, "my_") {
-			if len(matches) > 1 {
-				fmt.Printf("[shared-download] selected local remote %s for %s %s from modern names (candidates: %s)\n", name, remoteType, sharedToEmail, strings.Join(matches, ", "))
-			}
-			return name, true
-		}
-	}
-
-	return matches[0], true
+	fmt.Printf("[shared-download] no active unic upstream remote for %s %s (unic upstreams: %s, candidates: %s)\n", remoteType, sharedToEmail, config.GetValue("unic", "upstreams"), strings.Join(matches, ", "))
+	return "", false
 }
 
 func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, fileId string, sessions map[string]downloadSession, requiredShards int, parityShards int) (err error) {
