@@ -152,6 +152,10 @@ func Dis_Download(args []string, reSignal bool) (err error) {
 }
 
 type downloadSession struct {
+	Sources []downloadSource
+}
+
+type downloadSource struct {
 	Fs         fs.Fs
 	ConnString string
 }
@@ -205,24 +209,22 @@ func initDownloadSessions(shards []DistributedFile, fileId string, driveIdMap, f
 		}
 		connStrings = append(connStrings, defaultConnString)
 
-		var fsrc fs.Fs
-		var selectedConnString string
 		var lastErr error
+		sources := []downloadSource{}
 		for _, connString := range connStrings {
-			var err error
-			fsrc, err = fs.NewFs(context.Background(), connString)
+			fsrc, err := fs.NewFs(context.Background(), connString)
 			// fs.ErrorIsFile can happen if the path is interpreted as a file, but we want the parent FS for copying.
 			if err == nil || err == fs.ErrorIsFile {
-				selectedConnString = connString
 				lastErr = nil
-				break
+				sources = append(sources, downloadSource{Fs: fsrc, ConnString: connString})
+				continue
 			}
 			lastErr = err
 		}
-		if lastErr != nil {
+		if len(sources) == 0 {
 			return nil, fmt.Errorf("failed to create session for %s using %s: %w", id, strings.Join(connStrings, ", "), lastErr)
 		}
-		sessions[id] = downloadSession{Fs: fsrc, ConnString: selectedConnString}
+		sessions[id] = downloadSession{Sources: sources}
 	}
 	return sessions, nil
 }
@@ -314,7 +316,7 @@ func startDownloadFileGoroutine_Worker(distributedFileInfos []DistributedFile, f
 			fmt.Printf("[DL-Pool] Starting batch download for remote: %s (%d shards)\n", identity, len(list))
 
 			for _, fileInfo := range list {
-				err := downloadFile(fileInfo, fdst, session.Fs, session.ConnString, shardDir, fileId, &mu, &errs, &fileCount, totalShards)
+				err := downloadFile(fileInfo, fdst, session.Sources, shardDir, fileId, &mu, &errs, &fileCount, totalShards)
 				if err != nil {
 					shardErr := fmt.Errorf("failed shard %s on %s: %v", fileInfo.DistributedFile, identity, err)
 					fmt.Printf("[DL-Pool] ❌ %v\n", shardErr)
@@ -344,7 +346,7 @@ func copyShardWithRcloneCommand(connString, shardDir, shardName string) error {
 	if connString == "" {
 		return fmt.Errorf("empty source connection string")
 	}
-	cmd := exec.Command(os.Args[0], "copy", connString, shardDir, "--include", shardName, "--error-on-no-transfer")
+	cmd := exec.Command(os.Args[0], "copy", connString, shardDir, "--include", shardName, "--error-on-no-transfer", "--retries", "1")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -359,7 +361,7 @@ func copyShardWithRcloneCommand(connString, shardDir, shardName string) error {
 
 // Legacy function startDownloadFileGoroutine removed as it was replaced by startDownloadFileGoroutine_Worker
 
-func downloadFile(fileInfo DistributedFile, fdst fs.Fs, fsrc fs.Fs, connString string, shardDir string, fileId string, mu *sync.Mutex, errs *[]error, fileCount *int, totalShards int) error {
+func downloadFile(fileInfo DistributedFile, fdst fs.Fs, sources []downloadSource, shardDir string, fileId string, mu *sync.Mutex, errs *[]error, fileCount *int, totalShards int) error {
 	startTime := time.Now()
 
 	hashedFileName, err := CalculateHash(fileInfo.DistributedFile)
@@ -378,24 +380,38 @@ func downloadFile(fileInfo DistributedFile, fdst fs.Fs, fsrc fs.Fs, connString s
 	// and initDownloadSessions points there for the 'default' case.
 	// For shared drives, it points to the share root.
 
-	err = operations.CopyFile(context.Background(), fdst, fsrc, srcFileName, srcFileName)
-	if err != nil {
-		fmt.Printf("[Download] CopyFile failed for %s from %s, falling back to rclone copy --include: %v\n", srcFileName, connString, err)
-		if fallbackErr := copyShardWithRcloneCommand(connString, shardDir, srcFileName); fallbackErr != nil {
-			return fmt.Errorf("CopyFile error: %w; fallback copy error: %v", err, fallbackErr)
+	var sourceFs fs.Fs
+	var lastErr error
+	for _, source := range sources {
+		err = operations.CopyFile(context.Background(), fdst, source.Fs, srcFileName, srcFileName)
+		if err != nil {
+			fmt.Printf("[Download] CopyFile failed for %s from %s, falling back to rclone copy --include: %v\n", srcFileName, source.ConnString, err)
+			if fallbackErr := copyShardWithRcloneCommand(source.ConnString, shardDir, srcFileName); fallbackErr != nil {
+				lastErr = fmt.Errorf("CopyFile error from %s: %w; fallback copy error: %v", source.ConnString, err, fallbackErr)
+				continue
+			}
+		} else if _, statErr := os.Stat(filepath.Join(shardDir, srcFileName)); statErr != nil {
+			fmt.Printf("[Download] CopyFile returned success but %s is missing, falling back to rclone copy --include: %v\n", srcFileName, statErr)
+			if fallbackErr := copyShardWithRcloneCommand(source.ConnString, shardDir, srcFileName); fallbackErr != nil {
+				lastErr = fmt.Errorf("CopyFile produced no local file from %s: %v; fallback copy error: %v", source.ConnString, statErr, fallbackErr)
+				continue
+			}
 		}
-	} else if _, statErr := os.Stat(filepath.Join(shardDir, srcFileName)); statErr != nil {
-		fmt.Printf("[Download] CopyFile returned success but %s is missing, falling back to rclone copy --include: %v\n", srcFileName, statErr)
-		if fallbackErr := copyShardWithRcloneCommand(connString, shardDir, srcFileName); fallbackErr != nil {
-			return fmt.Errorf("CopyFile produced no local file: %v; fallback copy error: %v", statErr, fallbackErr)
-		}
+		sourceFs = source.Fs
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
+		return lastErr
 	}
 
 	elapsedTime := time.Since(startTime)
 	// Calculate throughput
 	shardSize := int64(0)
-	if obj, err := fsrc.NewObject(context.Background(), srcFileName); err == nil {
-		shardSize = obj.Size()
+	if sourceFs != nil {
+		if obj, err := sourceFs.NewObject(context.Background(), srcFileName); err == nil {
+			shardSize = obj.Size()
+		}
 	}
 	throughput := float64(shardSize) / elapsedTime.Seconds()
 	throughputKbps := throughput * 8 / 1e3
