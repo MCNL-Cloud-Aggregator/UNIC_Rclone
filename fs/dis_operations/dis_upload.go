@@ -105,6 +105,19 @@ func copyShardWithRcloneCopyTo(remoteName, fileId, shardFileName string) error {
 	return nil
 }
 
+func mkdirWithRcloneMkdir(remoteName, fileId string) error {
+	dst := fmt.Sprintf("%s:%s/%s", remoteName, remoteDirectory, fileId)
+
+	cmd := exec.Command(os.Args[0], "mkdir", dst)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("rclone mkdir fallback failed: %w: %s", err, strings.TrimSpace(out.String()))
+	}
+	return nil
+}
+
 var copyCommandDefinition = &cobra.Command{
 	Use: "copy source:path dest:path",
 	Annotations: map[string]string{
@@ -572,15 +585,24 @@ func MakeDistributionDir(remotes []config.Remote, fileId string) error {
 			parentFs := cmd.NewFsDir([]string{parentArg})
 			remoteIdentity := Remote{Name: remote.Name, Type: remote.Type}.String()
 
-			err := retryUploadOperation(
-				fmt.Sprintf("mkdir %s/%s on %s", remoteDirectory, fileId, remoteIdentity),
-				func() error {
-					return operations.Mkdir(context.Background(), parentFs, fileId)
-				},
-			)
+			err := operations.Mkdir(context.Background(), parentFs, fileId)
 			if err != nil {
+				mkdirErr := err
+				fmt.Printf("[UNIC Fallback] mkdir failed for %s/%s on %s: %v. Falling back to rclone mkdir.\n",
+					remoteDirectory, fileId, remoteIdentity, mkdirErr)
+
+				err = retryUploadOperation(
+					fmt.Sprintf("rclone mkdir %s/%s on %s", remoteDirectory, fileId, remoteIdentity),
+					func() error {
+						return mkdirWithRcloneMkdir(remote.Name, fileId)
+					},
+				)
+				if err == nil {
+					return
+				}
+
 				mu.Lock()
-				errs = append(errs, fmt.Errorf("error creating directory on %s: %w", remoteIdentity, err))
+				errs = append(errs, fmt.Errorf("error creating directory on %s: mkdir error: %w; fallback error: %v", remoteIdentity, mkdirErr, err))
 				mu.Unlock()
 				return
 			}
